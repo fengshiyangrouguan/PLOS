@@ -72,6 +72,8 @@ export function mountApp(
     replaceLayoutNode: commands.layout.replaceLayoutNode,
     setSplitRatio: commands.layout.setSplitRatio,
     setLayoutInteraction: screenDepth.setLayoutInteraction,
+    getLogicalRect: screenDepth.getLogicalRect,
+    getInteractionBlend: screenDepth.getInteractionBlend,
   });
 
   const disposers: Array<() => void> = [];

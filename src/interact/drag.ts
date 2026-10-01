@@ -11,6 +11,8 @@ export interface DragCommands {
   replaceLayoutNode: (id: string, replacement: LayoutNode) => void;
   setSplitRatio: (splitId: string, ratio: number) => void;
   setLayoutInteraction: (active: boolean) => void;
+  getLogicalRect: (element: HTMLElement) => DOMRect;
+  getInteractionBlend: () => number;
 }
 
 export interface DragController {
@@ -35,13 +37,12 @@ export function createDragController(workspaceRoot: HTMLElement, commands: DragC
   let moveFrame = 0;
   let latestPointer: { clientX: number; clientY: number } | null = null;
   let preview: HTMLDivElement | null = null;
-  let previewMode: PreviewMode | null = null;
-  let previewRemovalTimer = 0;
+  let previewKey: string | null = null;
+  const leavingPreviews = new Map<HTMLDivElement, number>();
 
   const previewElement = (): HTMLDivElement => {
     if (preview) return preview;
     preview = document.createElement('div');
-    preview.id = 'split-preview';
     preview.className = 'split-preview';
     preview.setAttribute('aria-hidden', 'true');
 
@@ -64,50 +65,59 @@ export function createDragController(workspaceRoot: HTMLElement, commands: DragC
   };
 
   /**
-   * 预览退出不能立即删除 DOM，否则合并中心标识无法完成收回动画。
-   * 同一个节点会在一次拖拽中复用；若退出期间重新命中目标，则取消定时删除并继续显示。
+   * 把当前预览冻结在最后一次几何位置，再独立执行退出动画。退出节点不再被复用，
+   * 因而 merge 切换到 split 或另一个 merge 目标时，不会被移动到新矩形后才开始收回。
    */
-  const hidePreview = (immediate = false): void => {
-    if (!preview) return;
-    if (immediate) {
-      if (previewRemovalTimer) window.clearTimeout(previewRemovalTimer);
-      previewRemovalTimer = 0;
-      preview.remove();
-      preview = null;
-      previewMode = null;
-      return;
-    }
-    if (preview.classList.contains('is-leaving')) return;
-    if (previewRemovalTimer) window.clearTimeout(previewRemovalTimer);
-    preview.classList.add('is-leaving');
-    previewMode = null;
-    const leavingElement = preview;
-    previewRemovalTimer = window.setTimeout(() => {
-      if (preview === leavingElement) {
-        leavingElement.remove();
-        preview = null;
-      }
-      previewRemovalTimer = 0;
+  const retirePreview = (element: HTMLDivElement): void => {
+    if (leavingPreviews.has(element)) return;
+    element.classList.add('is-leaving');
+    const timer = window.setTimeout(() => {
+      element.remove();
+      leavingPreviews.delete(element);
     }, PREVIEW_EXIT_DURATION);
+    leavingPreviews.set(element, timer);
   };
 
-  const showPreview = (mode: PreviewMode, cssText: string, axis?: SplitAxis): HTMLDivElement => {
-    const needsEntrance = !preview || preview.classList.contains('is-leaving');
-    const modeChanged = previewMode !== mode;
-    const element = previewElement();
-    if (previewRemovalTimer) {
-      window.clearTimeout(previewRemovalTimer);
-      previewRemovalTimer = 0;
+  const hidePreview = (immediate = false): void => {
+    if (immediate) {
+      preview?.remove();
+      preview = null;
+      previewKey = null;
+      for (const [element, timer] of leavingPreviews) {
+        window.clearTimeout(timer);
+        element.remove();
+      }
+      leavingPreviews.clear();
+      return;
     }
+    if (!preview) return;
+    retirePreview(preview);
+    preview = null;
+    previewKey = null;
+  };
+
+  const showPreview = (
+    mode: PreviewMode,
+    key: string,
+    cssText: string,
+    axis?: SplitAxis,
+  ): HTMLDivElement => {
+    if (preview && previewKey !== key) {
+      retirePreview(preview);
+      preview = null;
+      previewKey = null;
+    }
+
+    const needsEntrance = !preview;
+    const element = previewElement();
     element.style.cssText = cssText;
 
-    if (needsEntrance || modeChanged) {
-      element.classList.remove('is-leaving', 'split-mode', 'merge-preview', 'axis-x', 'axis-y');
-      // 仅首次出现或撤销退出时建立起始帧；普通 pointermove 不触发布局读取。
-      if (needsEntrance) void element.offsetWidth;
+    if (needsEntrance) {
+      // 新状态建立独立入场帧；同一状态的普通 pointermove 只更新几何，不重启动画。
+      void element.offsetWidth;
       element.classList.add(mode === 'merge' ? 'merge-preview' : 'split-mode');
       if (axis) element.classList.add(`axis-${axis}`);
-      previewMode = mode;
+      previewKey = key;
     }
     return element;
   };
@@ -121,6 +131,7 @@ export function createDragController(workspaceRoot: HTMLElement, commands: DragC
     if (axis === 'x') {
       showPreview(
         'split',
+        `split:${axis}`,
         `left:${firstSide ? rect.left : x}px;top:${rect.top}px;width:${firstSide ? x - rect.left : rect.right - x}px;height:${rect.height}px`,
         axis,
       );
@@ -128,6 +139,7 @@ export function createDragController(workspaceRoot: HTMLElement, commands: DragC
     else {
       showPreview(
         'split',
+        `split:${axis}`,
         `left:${rect.left}px;top:${firstSide ? rect.top : y}px;width:${rect.width}px;height:${firstSide ? y - rect.top : rect.bottom - y}px`,
         axis,
       );
@@ -137,17 +149,21 @@ export function createDragController(workspaceRoot: HTMLElement, commands: DragC
   const showMergePreview = (targetId: string): void => {
     const target = workspaceRoot.querySelector<HTMLElement>(`[data-area="${targetId}"]`);
     if (!target) return;
-    const rect = target.getBoundingClientRect();
-    showPreview('merge', `left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px`);
+    const rect = commands.getLogicalRect(target);
+    showPreview(
+      'merge',
+      `merge:${targetId}`,
+      `left:${rect.left}px;top:${rect.top}px;width:${rect.width}px;height:${rect.height}px`,
+    );
   };
 
   const adjacentAreaAtPoint = (state: CornerDragState, x: number, y: number): string | null => {
     const candidates = Array.from(workspaceRoot.querySelectorAll<HTMLElement>('[data-area]'))
       .filter((element) => element.dataset.area !== state.areaId)
-      .map((element) => ({ id: element.dataset.area!, rect: element.getBoundingClientRect() }));
+      .map((element) => ({ id: element.dataset.area!, rect: commands.getLogicalRect(element) }));
     return findAdjacentArea(
       state.rect,
-      { x: state.startX, y: state.startY },
+      { x: state.startX - state.logicalOffsetX, y: state.startY - state.logicalOffsetY },
       { x, y },
       candidates,
     );
@@ -196,8 +212,12 @@ export function createDragController(workspaceRoot: HTMLElement, commands: DragC
         hidePreview();
         return;
       }
-      const outward = outsideSource(cornerDrag, event.clientX, event.clientY);
-      const targetId = outward ? adjacentAreaAtPoint(cornerDrag, event.clientX, event.clientY) : null;
+      // 指针事件属于视觉曲面坐标；减去按下时记录的偏移后，才是稳定的平面布局坐标。
+      const interactionBlend = commands.getInteractionBlend();
+      const logicalX = event.clientX - cornerDrag.logicalOffsetX * interactionBlend;
+      const logicalY = event.clientY - cornerDrag.logicalOffsetY * interactionBlend;
+      const outward = outsideSource(cornerDrag, logicalX, logicalY);
+      const targetId = outward ? adjacentAreaAtPoint(cornerDrag, logicalX, logicalY) : null;
       if (targetId) {
         cornerDrag.axis = null;
         cornerDrag.mergeTargetId = targetId;
@@ -213,18 +233,19 @@ export function createDragController(workspaceRoot: HTMLElement, commands: DragC
       if (!cornerDrag.axis) cornerDrag.axis = Math.abs(dx) >= Math.abs(dy) ? 'x' : 'y';
       const size = cornerDrag.axis === 'x' ? cornerDrag.rect.width : cornerDrag.rect.height;
       const position = cornerDrag.axis === 'x'
-        ? event.clientX - cornerDrag.rect.left
-        : event.clientY - cornerDrag.rect.top;
+        ? logicalX - cornerDrag.rect.left
+        : logicalY - cornerDrag.rect.top;
       const minRatio = Math.min(35, 140 / size * 100);
       cornerDrag.ratio = Math.max(minRatio, Math.min(100 - minRatio, position / size * 100));
-      showSplitPreview(cornerDrag, event);
+      showSplitPreview(cornerDrag, { clientX: logicalX, clientY: logicalY });
       return;
     }
     if (dividerDrag) {
       const size = dividerDrag.axis === 'x' ? dividerDrag.rect.width : dividerDrag.rect.height;
+      const logicalOffset = dividerDrag.logicalOffset * commands.getInteractionBlend();
       const position = dividerDrag.axis === 'x'
-        ? event.clientX - dividerDrag.rect.left
-        : event.clientY - dividerDrag.rect.top;
+        ? event.clientX - logicalOffset - dividerDrag.rect.left
+        : event.clientY - logicalOffset - dividerDrag.rect.top;
       const minRatio = Math.min(40, 140 / size * 100);
       dividerDrag.ratio = Math.max(minRatio, Math.min(100 - minRatio, position / size * 100));
       dividerDrag.element.style.setProperty('--split-ratio', `${dividerDrag.ratio}%`);
@@ -267,14 +288,18 @@ export function createDragController(workspaceRoot: HTMLElement, commands: DragC
   const startCornerDrag = (event: PointerEvent, areaId: string, corner: Corner, element: HTMLElement): void => {
     event.preventDefault();
     event.stopPropagation();
-    // 先同步撤销曲面投影，再记录逻辑矩形，避免把投影后的外接框误当成布局坐标。
+    const rect = commands.getLogicalRect(element);
+    const logicalCornerX = corner.includes('left') ? rect.left : rect.right;
+    const logicalCornerY = corner.includes('top') ? rect.top : rect.bottom;
     commands.setLayoutInteraction(true);
     cornerDrag = {
       areaId,
       corner,
       startX: event.clientX,
       startY: event.clientY,
-      rect: element.getBoundingClientRect(),
+      logicalOffsetX: event.clientX - logicalCornerX,
+      logicalOffsetY: event.clientY - logicalCornerY,
+      rect,
       axis: null,
       ratio: 50,
       mergeTargetId: null,
@@ -287,9 +312,19 @@ export function createDragController(workspaceRoot: HTMLElement, commands: DragC
     event.stopPropagation();
     const split = findSplit(commands.getLayout(), splitId);
     if (!split) return;
-    // divider 与 Area 在同一时刻回到逻辑平面，拖动比例基于未投影的 split 尺寸计算。
+    const rect = commands.getLogicalRect(element);
+    const logicalDividerPosition = axis === 'x'
+      ? rect.left + rect.width * split.ratio / 100
+      : rect.top + rect.height * split.ratio / 100;
     commands.setLayoutInteraction(true);
-    dividerDrag = { splitId, axis, rect: element.getBoundingClientRect(), element, ratio: split.ratio };
+    dividerDrag = {
+      splitId,
+      axis,
+      rect,
+      element,
+      ratio: split.ratio,
+      logicalOffset: (axis === 'x' ? event.clientX : event.clientY) - logicalDividerPosition,
+    };
     document.body.classList.add(axis === 'x' ? 'resize-x' : 'resize-y');
   };
 

@@ -5,12 +5,15 @@ export interface ScreenDepthController {
   update: (settings: ScreenDepthSettings) => void;
   setSuspended: (suspended: boolean) => void;
   setLayoutInteraction: (active: boolean) => void;
+  getLogicalRect: (element: HTMLElement) => DOMRect;
+  getInteractionBlend: () => number;
   refreshSurfaces: () => void;
   dispose: () => void;
 }
 
 const clamp = (value: number, min: number, max: number): number => Math.min(max, Math.max(min, value));
 const RESPONSE_RATE = 7;
+const INTERACTION_RESPONSE_RATE = 12;
 const SETTLE_EPSILON = 0.0001;
 
 /**
@@ -32,6 +35,8 @@ export function mountScreenDepth(
   let lastFrameTime = 0;
   let targetDepth = 0;
   let currentDepth = 0;
+  let interactionBlend = 1;
+  let targetInteractionBlend = 1;
   const pointer = { x: 0, y: 0 };
   const targetPointer = { x: 0, y: 0 };
   let projection: RadialSurfaceProjection;
@@ -39,9 +44,10 @@ export function mountScreenDepth(
   const pointerStrength = (): number => clamp(settings.followStrength / 50, 0, 2);
 
   const updateProjection = (): void => {
-    const effectiveDepth = layoutInteraction ? 0 : currentDepth;
+    // 交互权重只作用于运行时投影，不改变用户设置，也不进入 Store 或本地持久化。
+    const effectiveDepth = currentDepth * interactionBlend;
     const effectivePointer = reducedMotion.matches ? { x: 0, y: 0 } : pointer;
-    projection.update(effectiveDepth, effectivePointer);
+    projection.update(effectiveDepth, effectivePointer, layoutInteraction && settings.enabled);
   };
 
   const renderFrame = (time: number): void => {
@@ -51,16 +57,21 @@ export function mountScreenDepth(
       : 1 / 60;
     lastFrameTime = time;
     const blend = reducedMotion.matches ? 1 : 1 - Math.exp(-deltaSeconds * RESPONSE_RATE);
+    const interactionStep = reducedMotion.matches
+      ? 1
+      : 1 - Math.exp(-deltaSeconds * INTERACTION_RESPONSE_RATE);
     const nextPointerX = reducedMotion.matches ? 0 : targetPointer.x;
     const nextPointerY = reducedMotion.matches ? 0 : targetPointer.y;
     pointer.x += (nextPointerX - pointer.x) * blend;
     pointer.y += (nextPointerY - pointer.y) * blend;
     currentDepth += (targetDepth - currentDepth) * blend;
+    interactionBlend += (targetInteractionBlend - interactionBlend) * interactionStep;
     updateProjection();
 
     const unsettled = Math.abs(nextPointerX - pointer.x) > SETTLE_EPSILON
       || Math.abs(nextPointerY - pointer.y) > SETTLE_EPSILON
-      || Math.abs(targetDepth - currentDepth) > SETTLE_EPSILON;
+      || Math.abs(targetDepth - currentDepth) > SETTLE_EPSILON
+      || Math.abs(targetInteractionBlend - interactionBlend) > SETTLE_EPSILON;
     if (unsettled) {
       frame = requestAnimationFrame(renderFrame);
       return;
@@ -68,6 +79,7 @@ export function mountScreenDepth(
     pointer.x = nextPointerX;
     pointer.y = nextPointerY;
     currentDepth = targetDepth;
+    interactionBlend = targetInteractionBlend;
     lastFrameTime = 0;
     updateProjection();
   };
@@ -150,17 +162,20 @@ export function mountScreenDepth(
     setLayoutInteraction: (active) => {
       if (active === layoutInteraction) return;
       layoutInteraction = active;
+      targetInteractionBlend = active ? 0 : 1;
       if (active) {
         /*
-         * 拖拽控制器会在本次 pointerdown 内立即读取 Area 的逻辑矩形，因此这里必须
-         * 同步关闭 CSS 投影，不能等到下一次 RAF。写 dataset 只切换合成层 transform，
-         * 随后的 getBoundingClientRect() 会得到曲面变形前的布局坐标。
+         * 拖拽期间同时把鼠标切向偏移缓慢归零，避免曲率与跟随方向以不同节奏变化。
+         * 几何层通过 getLogicalRect() 独立读取未投影坐标，因此这里不再瞬间关闭 transform。
          */
-        stage.dataset.depthEnabled = 'false';
+        targetPointer.x = 0;
+        targetPointer.y = 0;
       }
       else projection.invalidate();
       requestFrame();
     },
+    getLogicalRect: (element) => projection.getLogicalRect(element),
+    getInteractionBlend: () => interactionBlend,
     refreshSurfaces,
     dispose: () => {
       stage.removeEventListener('pointermove', handlePointerMove);

@@ -123,9 +123,37 @@ export class RadialSurfaceProjection {
     this.dirty = true;
   }
 
-  update(depth: number, pointer: SurfacePoint): void {
+  /**
+   * 返回元素在曲面投影前的视口矩形。
+   *
+   * Area 和 divider surface 直接复用投影器的测量缓存，读取时不会关闭当前动画；
+   * split 容器本身不参与投影，可以安全回退到原生 getBoundingClientRect()。拖拽层因此
+   * 能在视觉仍处于曲面过渡时，始终使用稳定的平面布局坐标。
+   */
+  getLogicalRect(element: HTMLElement): DOMRect {
+    if (this.dirty) this.measure();
+    const surface = this.measured.find((item) => item.element === element);
+    if (!surface) return element.getBoundingClientRect();
+
+    const stageRect = this.stage.getBoundingClientRect();
+    const scaleX = stageRect.width / Math.max(1, this.stage.offsetWidth) || 1;
+    const scaleY = stageRect.height / Math.max(1, this.stage.offsetHeight) || 1;
+    return new DOMRect(
+      stageRect.left + surface.origin.x * scaleX,
+      stageRect.top + surface.origin.y * scaleY,
+      surface.width * scaleX,
+      surface.height * scaleY,
+    );
+  }
+
+  update(depth: number, pointer: SurfacePoint, keepEnabledAtRest = false): void {
     if (depth < 0.00001) {
-      this.stage.dataset.depthEnabled = 'false';
+      if (keepEnabledAtRest) {
+        // 交互展平期间保留预分片材质，只撤销几何矩阵，避免顶部栏玻璃层在终点闪切。
+        for (const element of this.surfaces) element.style.setProperty('--screen-projection', 'none');
+        this.stage.dataset.depthEnabled = 'true';
+      }
+      else this.stage.dataset.depthEnabled = 'false';
       return;
     }
     if (this.dirty) this.measure();
