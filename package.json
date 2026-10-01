@@ -6,8 +6,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
+    "test": "npm run test:menu-position && npm run test:projection && npm run test:state-slices && npm run test:adjacency",
     "test:menu-position": "node --experimental-strip-types tests/context-menu-position.test.mjs",
     "test:projection": "node --experimental-strip-types tests/radial-surface-projection.test.mjs",
+    "test:state-slices": "node --experimental-strip-types tests/slice-subscription.test.mjs",
+    "test:adjacency": "node --experimental-strip-types tests/area-adjacency.test.mjs",
     "preview": "vite preview"
   },
   "devDependencies": {

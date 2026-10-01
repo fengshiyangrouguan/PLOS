@@ -4,6 +4,7 @@ import { RadialSurfaceProjection } from './radial-surface-projection';
 export interface ScreenDepthController {
   update: (settings: ScreenDepthSettings) => void;
   setSuspended: (suspended: boolean) => void;
+  setLayoutInteraction: (active: boolean) => void;
   refreshSurfaces: () => void;
   dispose: () => void;
 }
@@ -78,9 +79,6 @@ export function mountScreenDepth(
   projection = new RadialSurfaceProjection(stage, requestFrame);
 
   const refreshSurfaces = (): void => {
-    layoutInteraction = document.body.classList.contains('resize-x')
-      || document.body.classList.contains('resize-y')
-      || document.body.classList.contains('is-splitting');
     projection.setSurfaces(Array.from(
       stage.querySelectorAll<HTMLElement>('[data-depth-surface]'),
     ));
@@ -88,14 +86,7 @@ export function mountScreenDepth(
   };
 
   const handlePointerMove = (event: PointerEvent): void => {
-    const draggingLayout = document.body.classList.contains('resize-x')
-      || document.body.classList.contains('resize-y')
-      || document.body.classList.contains('is-splitting');
-    if (draggingLayout !== layoutInteraction) {
-      layoutInteraction = draggingLayout;
-      if (!draggingLayout) projection.invalidate();
-    }
-    if (draggingLayout || !settings.enabled || reducedMotion.matches) {
+    if (layoutInteraction || !settings.enabled || reducedMotion.matches) {
       targetPointer.x = 0;
       targetPointer.y = 0;
       requestFrame();
@@ -155,6 +146,12 @@ export function mountScreenDepth(
         targetPointer.y = pointer.y;
         requestFrame();
       }
+    },
+    setLayoutInteraction: (active) => {
+      if (active === layoutInteraction) return;
+      layoutInteraction = active;
+      if (!active) projection.invalidate();
+      requestFrame();
     },
     refreshSurfaces,
     dispose: () => {

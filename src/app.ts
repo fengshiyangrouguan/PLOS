@@ -1,18 +1,66 @@
-import { initializeDragInteractions } from '@/interact/drag';
-import { mountApp, type AppRenderer } from '@/render/app';
+import { mountApp, type AppRenderer, type DashboardCommands } from '@/render/app';
 import '@/render/editors';
-import { createEditorContext } from '@/services/editor-data';
-import { getState, redo, subscribe, undo } from '@/store/state';
+import {
+  closeMenu,
+  commitAppearance,
+  mergeArea,
+  openMenu,
+  openTopBarMenu,
+  replaceLayoutNode,
+  resetState,
+  setAreaGap,
+  setBackgroundEffect,
+  setCornerHints,
+  setEditor,
+  setScreenDepthAmount,
+  setScreenDepthEnabled,
+  setScreenFollowStrength,
+  setSettingsOpen,
+  setSplitRatio,
+  switchLayer,
+  transparentBackground,
+  transparentBorder,
+} from '@/store/actions';
+import { appStateReader, getState, recordHistory, redo, undo } from '@/store/state';
 import { requiredElement } from '@/utils/dom';
 
 export function startApp(): () => void {
   const root = requiredElement<HTMLElement>('#app');
-  let renderer: AppRenderer | null = null;
-  const editorContext = createEditorContext((areaId) => renderer?.renderArea(areaId));
-  renderer = mountApp(root, getState(), editorContext);
-
-  const unsubscribe = subscribe((state, previous, change) => renderer?.update(state, previous, change));
-  const disposeDrag = initializeDragInteractions();
+  const commands: DashboardCommands = {
+    topbar: {
+      switchLayer,
+      openSettings: () => setSettingsOpen(true),
+      openMenu: openTopBarMenu,
+    },
+    menu: {
+      commitAppearance,
+      recordHistory,
+      setBackgroundEffect,
+      setEditor,
+      transparentBackground,
+      transparentBorder,
+    },
+    settings: {
+      recordHistory,
+      resetState,
+      setAreaGap,
+      setCornerHints,
+      setScreenDepthAmount,
+      setScreenDepthEnabled,
+      setScreenFollowStrength,
+    },
+    layout: {
+      mergeArea,
+      replaceLayoutNode,
+      setSplitRatio,
+      openMenu,
+    },
+    overlay: {
+      closeMenu,
+      closeSettings: () => setSettingsOpen(false),
+    },
+  };
+  const renderer: AppRenderer = mountApp(root, appStateReader, commands);
 
   const keyHandler = (event: KeyboardEvent): void => {
     if (event.key === 'Escape') {
@@ -53,8 +101,6 @@ export function startApp(): () => void {
   }, 1000);
 
   return () => {
-    unsubscribe();
-    disposeDrag();
     window.removeEventListener('keydown', keyHandler);
     document.removeEventListener('pointerdown', menuDismissHandler);
     window.clearInterval(clockTimer);

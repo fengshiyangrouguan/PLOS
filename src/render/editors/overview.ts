@@ -4,10 +4,20 @@ import { BarChart } from '../instruments/BarChart';
 import { ProgressBar } from '../instruments/ProgressBar';
 import { StatCard } from '../instruments/StatCard';
 
+interface OverviewData {
+  throughput: number;
+  activeTasks: number;
+  successRate: number;
+  latency: number;
+  progress: number;
+}
+
 registerEditor({
   kind: 'overview', label: '运行概览',
-  render: (area, context) => {
-    const data = context.getOverviewData(area.id);
+  data: {
+    read: (): OverviewData => ({ throughput: 1284, activeTasks: 24, successRate: 98.6, latency: 182, progress: 72 }),
+  },
+  render: (_area, data) => {
     return h('div', { class: 'editor overview-editor' },
       h('div', { class: 'overview-lead' },
         h('div', {}, h('span', { class: 'editor-kicker' }, 'AGENT PULSE / LIVE'), h('strong', { class: 'primary-value' }, data.throughput.toLocaleString()), h('span', { class: 'primary-unit' }, 'ops/min')),

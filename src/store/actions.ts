@@ -2,15 +2,13 @@ import { LAYER_PRESETS } from '@/config/layers';
 import { TOPBAR_APPEARANCE } from '@/domain/appearance/defaults';
 import type { AppearanceTarget, AreaAppearance, BackgroundEffect } from '@/domain/appearance/types';
 import type { EditorKind } from '@/domain/editor/types';
-import { createArea } from '@/domain/layout/factory';
-import { findArea, findFirstAreaId, removeArea, replaceNode, updateArea, updateSplit } from '@/domain/layout/tree';
+import { findArea, removeArea, replaceNode, updateArea, updateSplit } from '@/domain/layout/tree';
 import type { LayoutNode } from '@/domain/layout/types';
 import { DEFAULT_SCREEN_DEPTH } from '@/domain/screen/types';
 import { clone } from '@/utils/clone';
-import { uid } from '@/utils/id';
 import { clearHistory } from './history';
 import { clearPersisted } from './persist';
-import { getState, setState, type StateChange } from './state';
+import { getState, setState } from './state';
 
 const CLOSED_MENU = { open: false, x: 0, y: 0, target: null } as const;
 
@@ -20,34 +18,29 @@ const CLOSED_MENU = { open: false, x: 0, y: 0, target: null } as const;
  */
 function updateCurrentLayer(
   root: (current: LayoutNode) => LayoutNode,
-  change: StateChange,
-  historyLabel?: string,
-  selectedAreaId?: string,
+  history = false,
 ): void {
   setState((state) => {
     const layer = state.layers[state.activeLayerId];
     const nextRoot = root(layer.root);
-    if (nextRoot === layer.root && selectedAreaId === undefined) return state;
+    if (nextRoot === layer.root) return state;
     return {
       ...state,
       layers: {
         ...state.layers,
-        [state.activeLayerId]: {
-          root: nextRoot,
-          selectedAreaId: selectedAreaId ?? layer.selectedAreaId,
-        },
+        [state.activeLayerId]: { root: nextRoot },
       },
     };
-  }, { historyLabel, change });
+  }, { history });
 }
 
 export function switchLayer(layerId: string): void {
   if (!(layerId in getState().layers) || layerId === getState().activeLayerId) return;
-  setState({ activeLayerId: layerId, menu: CLOSED_MENU }, { change: { type: 'layer' } });
+  setState({ activeLayerId: layerId, menu: CLOSED_MENU });
 }
 
-export function replaceLayoutNode(id: string, replacement: LayoutNode, selectedId: string, label: string): void {
-  updateCurrentLayer((root) => replaceNode(root, id, replacement), { type: 'layout' }, label, selectedId);
+export function replaceLayoutNode(id: string, replacement: LayoutNode): void {
+  updateCurrentLayer((root) => replaceNode(root, id, replacement), true);
 }
 
 export function mergeArea(sourceId: string, targetId: string): void {
@@ -55,10 +48,9 @@ export function mergeArea(sourceId: string, targetId: string): void {
   const source = findArea(state.layers[state.activeLayerId].root, sourceId);
   if (!source || sourceId === targetId) return;
   updateCurrentLayer(
-    (root) => removeArea(root, targetId) ?? createArea(uid('empty'), 'empty'),
-    { type: 'layout' },
-    '合并 Area',
-    sourceId,
+    // sourceId 已在同一棵树中验证存在且不同于 targetId，因此删除 target 后不可能得到空树。
+    (root) => removeArea(root, targetId)!,
+    true,
   );
 }
 
@@ -73,25 +65,23 @@ export function setEditor(areaId: string, editor: EditorKind): void {
       layers: { ...state.layers, [state.activeLayerId]: { ...layer, root } },
       menu: CLOSED_MENU,
     };
-  }, { historyLabel: '切换 Editor', change: { type: 'layout' } });
+  }, { history: true });
 }
 
 function updateTargetAppearance(
   target: AppearanceTarget,
   update: (appearance: AreaAppearance) => AreaAppearance,
-  historyLabel?: string,
+  history = false,
 ): void {
   if (target.kind === 'topbar') {
     setState((state) => ({ ...state, topBarAppearance: update(state.topBarAppearance) }), {
-      historyLabel,
-      change: { type: 'appearance', target },
+      history,
     });
     return;
   }
   updateCurrentLayer(
     (root) => updateArea(root, target.areaId, (area) => ({ ...area, appearance: update(area.appearance) })),
-    { type: 'appearance', target },
-    historyLabel,
+    history,
   );
 }
 
@@ -101,21 +91,21 @@ export function commitAppearance(target: AppearanceTarget, key: keyof AreaAppear
 }
 
 export function setBackgroundEffect(target: AppearanceTarget, effect: BackgroundEffect): void {
-  updateTargetAppearance(target, (appearance) => ({ ...appearance, backgroundEffect: effect }), '修改背景效果');
+  updateTargetAppearance(target, (appearance) => ({ ...appearance, backgroundEffect: effect }), true);
 }
 
 export function setAreaGap(value: number): void {
   if (value === getState().areaGap) return;
-  setState({ areaGap: value }, { change: { type: 'gap' } });
+  setState({ areaGap: value });
 }
 
 export function setSplitRatio(splitId: string, ratio: number): void {
-  updateCurrentLayer((root) => updateSplit(root, splitId, ratio), { type: 'geometry' }, '调整 Area 尺寸');
+  updateCurrentLayer((root) => updateSplit(root, splitId, ratio), true);
 }
 
 export function setCornerHints(value: boolean): void {
   if (value === getState().showCornerHints) return;
-  setState({ showCornerHints: value }, { change: { type: 'chrome' } });
+  setState({ showCornerHints: value });
 }
 
 export function setScreenDepthEnabled(enabled: boolean): void {
@@ -123,7 +113,7 @@ export function setScreenDepthEnabled(enabled: boolean): void {
   setState((state) => ({
     ...state,
     screenDepth: { ...state.screenDepth, enabled },
-  }), { historyLabel: enabled ? '开启屏幕纵深' : '关闭屏幕纵深', change: { type: 'screen-depth' } });
+  }), { history: true });
 }
 
 export function setScreenDepthAmount(depth: number): void {
@@ -132,7 +122,7 @@ export function setScreenDepthAmount(depth: number): void {
   setState((state) => ({
     ...state,
     screenDepth: { ...state.screenDepth, depth: value },
-  }), { change: { type: 'screen-depth' } });
+  }));
 }
 
 export function setScreenFollowStrength(followStrength: number): void {
@@ -141,38 +131,29 @@ export function setScreenFollowStrength(followStrength: number): void {
   setState((state) => ({
     ...state,
     screenDepth: { ...state.screenDepth, followStrength: value },
-  }), { change: { type: 'screen-depth' } });
+  }));
 }
 
 export function setSettingsOpen(value: boolean): void {
   if (value === getState().settingsOpen) return;
-  setState({ settingsOpen: value }, { persist: false, change: { type: 'settings' } });
+  setState({ settingsOpen: value }, { persist: false });
 }
 
 export function openMenu(areaId: string, x: number, y: number): void {
-  setState((state) => {
-    const layer = state.layers[state.activeLayerId];
-    return {
-      ...state,
-      layers: {
-        ...state.layers,
-        [state.activeLayerId]: { ...layer, selectedAreaId: areaId },
-      },
-      menu: { open: true, target: { kind: 'area', areaId }, x, y },
-    };
-  }, { persist: false, change: { type: 'menu' } });
+  setState({ menu: { open: true, target: { kind: 'area', areaId }, x, y } }, {
+    persist: false,
+  });
 }
 
 export function openTopBarMenu(x: number, y: number): void {
   setState({ menu: { open: true, target: { kind: 'topbar' }, x, y } }, {
     persist: false,
-    change: { type: 'menu' },
   });
 }
 
 export function closeMenu(): void {
   if (!getState().menu.open) return;
-  setState({ menu: CLOSED_MENU }, { persist: false, change: { type: 'menu' } });
+  setState({ menu: CLOSED_MENU }, { persist: false });
 }
 
 export function transparentBackground(target: AppearanceTarget): void {
@@ -185,7 +166,7 @@ export function transparentBackground(target: AppearanceTarget): void {
       backgroundBlur: 0,
       shadowOpacity: 0,
     }),
-    '背景完全透明',
+    true,
   );
 }
 
@@ -193,7 +174,7 @@ export function transparentBorder(target: AppearanceTarget): void {
   updateTargetAppearance(
     target,
     (appearance) => ({ ...appearance, borderWidth: 0, borderOpacity: 0 }),
-    '边线完全透明',
+    true,
   );
 }
 
@@ -202,7 +183,7 @@ export function resetState(): void {
   clearHistory();
   const layers = Object.fromEntries(LAYER_PRESETS.map((preset) => {
     const root = clone(preset.root);
-    return [preset.id, { root, selectedAreaId: findFirstAreaId(root) }];
+    return [preset.id, { root }];
   }));
   setState((state) => ({
     ...state,
@@ -214,5 +195,5 @@ export function resetState(): void {
     topBarAppearance: clone(TOPBAR_APPEARANCE),
     menu: CLOSED_MENU,
     settingsOpen: false,
-  }), { change: { type: 'all' } });
+  }));
 }

@@ -12,7 +12,8 @@ let saveTimer: number | null = null;
 function serialize(state: AppState): PersistedState {
   return {
     activeLayerId: state.activeLayerId,
-    layers: state.layers,
+    // 显式选择持久化字段，避免旧状态对象上的废弃属性再次写回本地存储。
+    layers: Object.fromEntries(Object.entries(state.layers).map(([id, layer]) => [id, { root: layer.root }])),
     areaGap: state.areaGap,
     showCornerHints: state.showCornerHints,
     screenDepth: state.screenDepth,

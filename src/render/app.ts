@@ -1,9 +1,9 @@
 import { applyAreaAppearance, applyTopBarAppearance } from '@/domain/appearance/style';
-import type { EditorContext } from '@/domain/editor/context';
+import type { AppearanceTarget, AreaAppearance } from '@/domain/appearance/types';
 import { findArea } from '@/domain/layout/tree';
-import { closeMenu, setSettingsOpen } from '@/store/actions';
+import { createDragController, type DragCommands } from '@/interact/drag';
 import { currentLayer } from '@/store/selectors';
-import type { StateChange } from '@/store/state';
+import type { AppStateReader } from '@/store/state';
 import type { AppState } from '@/store/types';
 import { applyTheme } from '@/theme/apply';
 import { mountFractalBackground } from '@/theme/fractal-background';
@@ -11,28 +11,49 @@ import { revealContent, SurfaceTransition } from '@/theme/motion';
 import { mountScreenDepth } from '@/theme/screen-depth';
 import { themes } from '@/theme/tokens';
 import { h } from '@/utils/dom';
-import { ContextMenu, type ContextMenuView } from './context-menu';
-import { renderEditor, unmountEditor, unmountEditors } from './editors';
-import { LayoutView } from './layout';
-import { SettingsModal } from './settings';
-import { syncTopBar, TopBar } from './topbar';
+import { ContextMenu, type ContextMenuCommands, type ContextMenuView } from './context-menu';
+import { layoutStructureKey, LayoutView, type MountedLayout } from './layout';
+import { SettingsModal, type SettingsCommands } from './settings';
+import { syncTopBar, TopBar, type TopBarCommands } from './topbar';
+
+export interface DashboardCommands {
+  topbar: TopBarCommands;
+  menu: ContextMenuCommands;
+  settings: SettingsCommands;
+  layout: Pick<DragCommands, 'mergeArea' | 'replaceLayoutNode' | 'setSplitRatio'> & {
+    openMenu: (areaId: string, x: number, y: number) => void;
+  };
+  overlay: {
+    closeMenu: () => void;
+    closeSettings: () => void;
+  };
+}
 
 export interface AppRenderer {
-  update: (state: AppState, previous: AppState, change: StateChange) => void;
-  renderArea: (areaId: string) => void;
   dismissMenu: () => void;
   dismissSettings: () => void;
   dispose: () => void;
 }
 
+function menuAppearance(state: AppState): AreaAppearance | null {
+  const target = state.menu.target;
+  if (!state.menu.open || !target) return null;
+  if (target.kind === 'topbar') return state.topBarAppearance;
+  return findArea(currentLayer(state).root, target.areaId)?.appearance ?? null;
+}
+
 /**
- * 挂载一次应用骨架，之后按状态变更范围局部更新。
- * Top Bar、Workspace、菜单层和设置层拥有各自独立的 DOM 生命周期，任何一个控件的
- * 输入都不会再调用 root.replaceChildren，也不会让无关 Editor 反复卸载和挂载。
+ * 顶层只负责组合长期存活的控制器。每个控制器通过 selector 订阅自己的状态切片，
+ * 不再依赖手写 StateChange 路由；结构变化重建 Workspace，局部变化只更新所属组件。
  */
-export function mountApp(root: HTMLElement, initialState: AppState, context: EditorContext): AppRenderer {
+export function mountApp(
+  root: HTMLElement,
+  store: AppStateReader,
+  commands: DashboardCommands,
+): AppRenderer {
+  const initialState = store.getState();
   const background = h('canvas', { class: 'app-background', ariaHidden: 'true' });
-  const topbar = TopBar(initialState);
+  const topbar = TopBar(initialState, commands.topbar);
   const layoutRoot = h('div', { class: 'layout-root' });
   const workspace = h('main', { class: 'workspace', id: 'workspace' }, layoutRoot);
   const menuLayer = h('div', { class: 'overlay-layer menu-layer' });
@@ -45,32 +66,42 @@ export function mountApp(root: HTMLElement, initialState: AppState, context: Edi
   root.replaceChildren(screenSurface);
   const disposeBackground = mountFractalBackground(background);
   const screenDepth = mountScreenDepth(screenSurface, initialState.screenDepth);
-  let state = initialState;
+  const drag = createDragController(layoutRoot, {
+    getLayout: () => currentLayer(store.getState()).root,
+    mergeArea: commands.layout.mergeArea,
+    replaceLayoutNode: commands.layout.replaceLayoutNode,
+    setSplitRatio: commands.layout.setSplitRatio,
+    setLayoutInteraction: screenDepth.setLayoutInteraction,
+  });
+
+  const disposers: Array<() => void> = [];
+  let mountedLayout: MountedLayout | null = null;
   let menuView: ContextMenuView | null = null;
   let menuTransition: SurfaceTransition | null = null;
   let settingsTransition: SurfaceTransition | null = null;
 
+  const previewAppearance = (target: AppearanceTarget, appearance: AreaAppearance): void => {
+    if (target.kind === 'topbar') {
+      applyTopBarAppearance(topbar, appearance);
+      return;
+    }
+    const element = layoutRoot.querySelector<HTMLElement>(`[data-area="${target.areaId}"]`);
+    if (element) applyAreaAppearance(element, appearance);
+  };
+
   const renderWorkspace = (): void => {
-    unmountEditors();
-    const content = LayoutView(currentLayer(state).root, state, context);
-    layoutRoot.replaceChildren(content);
-    layoutRoot.style.setProperty('--area-gap', `${state.areaGap}px`);
-    revealContent(content);
-    screenDepth.refreshSurfaces();
-  };
-
-  const syncGap = (): void => {
-    layoutRoot.style.setProperty('--area-gap', `${state.areaGap}px`);
-    layoutRoot.querySelectorAll<HTMLElement>('[data-split]').forEach((element) => {
-      element.style.setProperty('--area-gap', `${state.areaGap}px`);
+    mountedLayout?.dispose();
+    const state = store.getState();
+    mountedLayout = LayoutView(currentLayer(state).root, {
+      store,
+      drag,
+      openMenu: commands.layout.openMenu,
+      geometryChanged: screenDepth.refreshSurfaces,
     });
+    layoutRoot.replaceChildren(mountedLayout.element);
+    mountedLayout.mount();
+    revealContent(mountedLayout.element);
     screenDepth.refreshSurfaces();
-  };
-
-  const syncCornerHints = (): void => {
-    layoutRoot.querySelectorAll<HTMLElement>('[data-area]').forEach((element) => {
-      element.classList.toggle('show-corner-hints', state.showCornerHints);
-    });
   };
 
   const syncMenu = (): void => {
@@ -78,7 +109,7 @@ export function mountApp(root: HTMLElement, initialState: AppState, context: Edi
     menuTransition = null;
     menuView = null;
     menuLayer.replaceChildren();
-    const next = ContextMenu(state);
+    const next = ContextMenu(store.getState(), commands.menu, previewAppearance);
     if (!next) return;
     menuView = next;
     menuLayer.append(next.element);
@@ -91,7 +122,20 @@ export function mountApp(root: HTMLElement, initialState: AppState, context: Edi
     settingsTransition?.dispose();
     settingsTransition = null;
     settingsLayer.replaceChildren();
-    const modal = SettingsModal(state, dismissSettings, screenDepth.update);
+    const state = store.getState();
+    if (!state.settingsOpen) {
+      // Escape 或遮罩关闭可能发生在 range 的 change 事件之前；关闭时必须丢弃未提交预览。
+      layoutRoot.style.setProperty('--area-gap', `${state.areaGap}px`);
+      screenDepth.update(state.screenDepth);
+      return;
+    }
+    const modal = SettingsModal(
+      state,
+      dismissSettings,
+      (value) => layoutRoot.style.setProperty('--area-gap', `${value}px`),
+      screenDepth.update,
+      commands.settings,
+    );
     if (!modal) return;
     settingsLayer.append(modal);
     const panel = modal.querySelector<HTMLElement>('.settings-modal') ?? modal;
@@ -100,110 +144,98 @@ export function mountApp(root: HTMLElement, initialState: AppState, context: Edi
   };
 
   function dismissMenu(): void {
-    if (!state.menu.open) return;
+    if (!store.getState().menu.open) return;
     if (!menuTransition) {
-      closeMenu();
+      commands.overlay.closeMenu();
       return;
     }
-    menuTransition.hide(closeMenu);
+    menuTransition.hide(commands.overlay.closeMenu);
   }
 
   function dismissSettings(): void {
-    if (!state.settingsOpen) return;
+    if (!store.getState().settingsOpen) return;
     if (!settingsTransition) {
-      setSettingsOpen(false);
+      commands.overlay.closeSettings();
       return;
     }
-    settingsTransition.hide(() => setSettingsOpen(false));
+    settingsTransition.hide(commands.overlay.closeSettings);
   }
 
-  const renderArea = (areaId: string): void => {
-    const area = findArea(currentLayer(state).root, areaId);
-    const areaElement = layoutRoot.querySelector<HTMLElement>(`[data-area="${areaId}"]`);
-    const content = areaElement?.querySelector<HTMLElement>('.area-content');
-    if (!area || !content) return;
-    unmountEditor(areaId);
-    content.replaceChildren(renderEditor(area, context));
-  };
-
-  const update = (nextState: AppState, previous: AppState, change: StateChange): void => {
-    state = nextState;
-    // 浮层打开时冻结当前曲面，避免右键后背景突然回到中心位置。
-    screenDepth.setSuspended(state.menu.open || state.settingsOpen);
-    if (nextState.themeId !== previous.themeId || change.type === 'all') applyTheme(themes[nextState.themeId]);
-
-    switch (change.type) {
-      case 'appearance': {
-        if (change.target.kind === 'topbar') {
-          applyTopBarAppearance(topbar, state.topBarAppearance);
-          menuView?.sync(state.topBarAppearance);
-          break;
-        }
-        const area = findArea(currentLayer(state).root, change.target.areaId);
-        const element = layoutRoot.querySelector<HTMLElement>(`[data-area="${change.target.areaId}"]`);
-        if (area && element) {
-          applyAreaAppearance(element, area.appearance);
-          menuView?.sync(area.appearance);
-        }
-        break;
-      }
-      case 'menu':
-        syncMenu();
-        break;
-      case 'settings':
-        // 关闭设置时用已提交状态覆盖可能尚未提交的滑块预览值。
-        screenDepth.update(state.screenDepth);
-        syncSettings();
-        break;
-      case 'gap':
-        syncGap();
-        break;
-      case 'screen-depth':
-        screenDepth.update(state.screenDepth);
-        break;
-      case 'chrome':
-        syncCornerHints();
-        break;
-      case 'geometry':
-        // 拖动期间 DOM 已经得到最终比例；提交后只重新测量 Area 的曲面位置。
-        screenDepth.refreshSurfaces();
-        break;
-      case 'layer':
-        syncTopBar(topbar, state);
-        renderWorkspace();
-        syncMenu();
-        break;
-      case 'layout':
-        renderWorkspace();
-        syncMenu();
-        break;
-      case 'all':
-        screenDepth.update(state.screenDepth);
-        syncTopBar(topbar, state);
-        renderWorkspace();
-        syncMenu();
-        syncSettings();
-        break;
-    }
-  };
-
-  applyTheme(themes[state.themeId]);
+  // 先订阅拓扑，再挂载子组件；Layer/分割变化时父订阅会先销毁旧 Area 的订阅。
+  disposers.push(store.subscribeSlice(
+    (state) => `${state.activeLayerId}:${layoutStructureKey(currentLayer(state).root)}`,
+    renderWorkspace,
+  ));
   renderWorkspace();
+
+  applyTheme(themes[initialState.themeId]);
+  disposers.push(store.subscribeSlice(
+    (state) => state.themeId,
+    (themeId) => applyTheme(themes[themeId]),
+  ));
+
+  layoutRoot.style.setProperty('--area-gap', `${initialState.areaGap}px`);
+  disposers.push(store.subscribeSlice(
+    (state) => state.areaGap,
+    (areaGap) => {
+      layoutRoot.style.setProperty('--area-gap', `${areaGap}px`);
+      screenDepth.refreshSurfaces();
+    },
+  ));
+
+  layoutRoot.classList.toggle('show-corner-hints', initialState.showCornerHints);
+  disposers.push(store.subscribeSlice(
+    (state) => state.showCornerHints,
+    (visible) => layoutRoot.classList.toggle('show-corner-hints', visible),
+  ));
+
+  disposers.push(store.subscribeSlice(
+    (state) => state.activeLayerId,
+    () => syncTopBar(topbar, store.getState()),
+  ));
+  disposers.push(store.subscribeSlice(
+    (state) => state.topBarAppearance,
+    (appearance) => applyTopBarAppearance(topbar, appearance),
+  ));
+  disposers.push(store.subscribeSlice(
+    (state) => state.screenDepth,
+    screenDepth.update,
+  ));
+  disposers.push(store.subscribeSlice(
+    (state) => state.menu.open || state.settingsOpen,
+    screenDepth.setSuspended,
+  ));
+
   syncMenu();
+  disposers.push(store.subscribeSlice(
+    (state) => state.menu,
+    syncMenu,
+  ));
+  disposers.push(store.subscribeSlice(
+    menuAppearance,
+    (appearance) => {
+      if (appearance) menuView?.sync(appearance);
+    },
+  ));
+
   syncSettings();
-  screenDepth.setSuspended(state.menu.open || state.settingsOpen);
+  disposers.push(store.subscribeSlice(
+    (state) => state.settingsOpen,
+    syncSettings,
+  ));
+  screenDepth.setSuspended(initialState.menu.open || initialState.settingsOpen);
 
   return {
-    update,
-    renderArea,
     dismissMenu,
     dismissSettings,
     dispose: () => {
+      for (const dispose of disposers) dispose();
+      mountedLayout?.dispose();
+      drag.dispose();
       disposeBackground();
       screenDepth.dispose();
       menuTransition?.dispose();
       settingsTransition?.dispose();
-      unmountEditors();
       root.replaceChildren();
     },
   };

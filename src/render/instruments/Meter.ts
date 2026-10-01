@@ -1,6 +1,6 @@
 import { h } from '@/utils/dom';
 
-interface MeterProps { label: string; value: string; percent: number; tone?: 'attention'; }
+export interface MeterProps { label: string; value: string; percent: number; tone?: 'attention'; }
 
 export function Meter(props: MeterProps): HTMLElement {
   return h('div', { class: 'telemetry-row' },

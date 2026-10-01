@@ -1,22 +1,33 @@
 import { LAYER_PRESETS } from '@/config/layers';
 import { applyTopBarAppearance } from '@/domain/appearance/style';
-import { openTopBarMenu, setSettingsOpen, switchLayer } from '@/store/actions';
 import type { AppState } from '@/store/types';
 import { h } from '@/utils/dom';
 import { UiGlyph } from './components/Glyph';
 
 const TOPBAR_DEPTH_SEGMENTS = 9;
 
+export interface TopBarCommands {
+  switchLayer: (layerId: string) => void;
+  openSettings: () => void;
+  openMenu: (x: number, y: number) => void;
+}
+
 function formatTime(): string {
   return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date());
 }
 
-function layerButton(id: string, label: string, shortLabel: string, state: AppState): HTMLButtonElement {
+function layerButton(
+  id: string,
+  label: string,
+  shortLabel: string,
+  state: AppState,
+  commands: TopBarCommands,
+): HTMLButtonElement {
   return h('button', {
     class: `layer-button ${id === state.activeLayerId ? 'active' : ''}`,
     ariaPressed: String(id === state.activeLayerId),
     dataset: { layerId: id, depthSurface: 'topbar-control' },
-    onClick: (() => switchLayer(id)) as EventListener,
+    onClick: (() => commands.switchLayer(id)) as EventListener,
   }, h('span', {}, label), h('small', {}, shortLabel));
 }
 
@@ -44,7 +55,7 @@ export function syncTopBar(element: HTMLElement, state: AppState): void {
   });
 }
 
-export function TopBar(state: AppState): HTMLElement {
+export function TopBar(state: AppState, commands: TopBarCommands): HTMLElement {
   const left = LAYER_PRESETS.slice(0, 2);
   const right = LAYER_PRESETS.slice(2);
   const element = h('header', {
@@ -53,7 +64,7 @@ export function TopBar(state: AppState): HTMLElement {
     ariaLabel: '顶部控制栏 Editor',
     onContextMenu: ((event: MouseEvent) => {
       event.preventDefault();
-      openTopBarMenu(event.clientX, event.clientY);
+      commands.openMenu(event.clientX, event.clientY);
     }) as unknown as EventListener,
   },
     TopBarDepthMesh(),
@@ -66,9 +77,9 @@ export function TopBar(state: AppState): HTMLElement {
     ),
     h('div', { class: 'workspace-rail' },
       h('span', { class: 'rail-line', dataset: { depthSurface: 'topbar-control' } }),
-      h('nav', { class: 'layer-group left', ariaLabel: '左侧工作区预设' }, ...left.map((layer) => layerButton(layer.id, layer.label, layer.shortLabel, state))),
-      h('button', { class: 'settings-button', title: '工作区设置', ariaLabel: '打开工作区设置', dataset: { depthSurface: 'topbar-control' }, onClick: (() => setSettingsOpen(true)) as EventListener }),
-      h('nav', { class: 'layer-group right', ariaLabel: '右侧工作区预设' }, ...right.map((layer) => layerButton(layer.id, layer.label, layer.shortLabel, state))),
+      h('nav', { class: 'layer-group left', ariaLabel: '左侧工作区预设' }, ...left.map((layer) => layerButton(layer.id, layer.label, layer.shortLabel, state, commands))),
+      h('button', { class: 'settings-button', title: '工作区设置', ariaLabel: '打开工作区设置', dataset: { depthSurface: 'topbar-control' }, onClick: commands.openSettings as EventListener }),
+      h('nav', { class: 'layer-group right', ariaLabel: '右侧工作区预设' }, ...right.map((layer) => layerButton(layer.id, layer.label, layer.shortLabel, state, commands))),
       h('span', { class: 'rail-line', dataset: { depthSurface: 'topbar-control' } }),
     ),
   );

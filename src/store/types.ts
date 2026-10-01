@@ -4,7 +4,6 @@ import type { ScreenDepthSettings } from '@/domain/screen/types';
 
 export interface LayerState {
   root: LayoutNode;
-  selectedAreaId: string;
 }
 
 export interface MenuState {
@@ -13,8 +12,6 @@ export interface MenuState {
   y: number;
   target: AppearanceTarget | null;
 }
-
-export type SyncStatus = 'idle' | 'syncing' | 'synced' | 'error';
 
 export interface AppState {
   activeLayerId: string;
@@ -26,7 +23,6 @@ export interface AppState {
   settingsOpen: boolean;
   menu: MenuState;
   themeId: 'light' | 'dark';
-  syncStatus: SyncStatus;
 }
 
 export interface PersistedState {

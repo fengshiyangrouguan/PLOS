@@ -1,5 +1,11 @@
-import type { ActivityEvent } from '@/domain/editor/context';
 import { h } from '@/utils/dom';
+
+export interface ActivityEvent {
+  time: string;
+  actor: string;
+  text: string;
+  tone: 'ok' | 'info' | 'warn';
+}
 
 export function EventRow(event: ActivityEvent): HTMLElement {
   return h('div', { class: 'event-row' },

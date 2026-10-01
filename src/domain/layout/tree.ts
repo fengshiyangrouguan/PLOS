@@ -11,10 +11,6 @@ export function findSplit(node: LayoutNode, id: string): SplitNode | null {
   return findSplit(node.first, id) || findSplit(node.second, id);
 }
 
-export function findFirstAreaId(node: LayoutNode): string {
-  return node.type === 'area' ? node.id : findFirstAreaId(node.first);
-}
-
 export function replaceNode(node: LayoutNode, id: string, replacement: LayoutNode): LayoutNode {
   if (node.id === id) return replacement;
   if (node.type === 'area') return node;

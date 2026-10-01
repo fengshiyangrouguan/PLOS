@@ -1,4 +1,3 @@
-import { applyAreaAppearance, applyTopBarAppearance } from '@/domain/appearance/style';
 import type {
   AppearanceTarget,
   AreaAppearance,
@@ -8,15 +7,7 @@ import type {
 } from '@/domain/appearance/types';
 import { getAllEditors, getEditor } from '@/domain/editor/registry';
 import { findArea } from '@/domain/layout/tree';
-import {
-  commitAppearance,
-  setBackgroundEffect,
-  setEditor,
-  transparentBackground,
-  transparentBorder,
-} from '@/store/actions';
 import { currentLayer } from '@/store/selectors';
-import { getState, recordHistory } from '@/store/state';
 import type { AppState } from '@/store/types';
 import { h } from '@/utils/dom';
 import { Slider } from './components/Slider';
@@ -33,6 +24,27 @@ export interface ContextMenuView {
   position: () => void;
   sync: (appearance: AreaAppearance) => void;
 }
+
+export interface ContextMenuCommands {
+  commitAppearance: (
+    target: AppearanceTarget,
+    key: keyof AreaAppearance,
+    value: string | number | BackgroundEffect,
+  ) => void;
+  recordHistory: () => void;
+  setBackgroundEffect: (target: AppearanceTarget, effect: BackgroundEffect) => void;
+  setEditor: (areaId: string, editor: string) => void;
+  transparentBackground: (target: AppearanceTarget) => void;
+  transparentBorder: (target: AppearanceTarget) => void;
+}
+
+interface AppearanceMenuView {
+  element: HTMLElement;
+  sync: (appearance: AreaAppearance) => void;
+}
+
+type AppearanceValue = string | number | BackgroundEffect;
+type AppearancePreview = (key: keyof AreaAppearance, value: AppearanceValue) => void;
 
 function MenuItem(label: string, branch = false, onClick?: () => void): HTMLButtonElement {
   return h('button', {
@@ -88,28 +100,6 @@ function targetAppearance(state: AppState, target: AppearanceTarget): AreaAppear
   return findArea(currentLayer(state).root, target.areaId)?.appearance ?? null;
 }
 
-/**
- * Area 和 Top Bar 都通过 AppearanceTarget 找到自己的长期存活节点。
- * Input 阶段只写目标节点的 CSS 变量；Change 阶段才提交 Store，因此两类 Editor
- * 使用完全相同的稳定预览事务，不会重建菜单或其他界面区域。
- */
-function previewAppearance(
-  target: AppearanceTarget,
-  key: keyof AreaAppearance,
-  value: string | number | BackgroundEffect,
-): void {
-  const appearance = targetAppearance(getState(), target);
-  if (!appearance) return;
-  const preview = { ...appearance, [key]: value };
-  if (target.kind === 'topbar') {
-    const element = document.querySelector<HTMLElement>('[data-editor="topbar"]');
-    if (element) applyTopBarAppearance(element, preview);
-    return;
-  }
-  const element = document.querySelector<HTMLElement>(`[data-area="${target.areaId}"]`);
-  if (element) applyAreaAppearance(element, preview);
-}
-
 function appearanceSlider(
   target: AppearanceTarget,
   label: string,
@@ -118,6 +108,8 @@ function appearanceSlider(
   min: number,
   max: number,
   step: number,
+  commands: ContextMenuCommands,
+  previewAppearance: AppearancePreview,
   suffix = '',
 ): HTMLElement {
   let previewFrame = 0;
@@ -127,7 +119,7 @@ function appearanceSlider(
     if (previewFrame) return;
     previewFrame = requestAnimationFrame(() => {
       previewFrame = 0;
-      previewAppearance(target, key, previewValue);
+      previewAppearance(key, previewValue);
     });
   };
   return Slider({
@@ -138,13 +130,13 @@ function appearanceSlider(
     max,
     step,
     suffix,
-    onStart: () => recordHistory(`修改 ${label}`),
+    onStart: commands.recordHistory,
     onInput: schedulePreview,
     onCommit: (next) => {
       if (previewFrame) cancelAnimationFrame(previewFrame);
       previewFrame = 0;
-      previewAppearance(target, key, next);
-      commitAppearance(target, key, next);
+      previewAppearance(key, next);
+      commands.commitAppearance(target, key, next);
     },
   });
 }
@@ -154,12 +146,14 @@ function colorControl(
   label: string,
   key: 'borderColor' | 'backgroundColor',
   value: string,
+  commands: ContextMenuCommands,
+  previewAppearance: AppearancePreview,
 ): HTMLElement {
   let transactionStarted = false;
   const start = (): void => {
     if (transactionStarted) return;
     transactionStarted = true;
-    recordHistory(`修改${label}`);
+    commands.recordHistory();
   };
   const input = h('input', {
     type: 'color',
@@ -168,10 +162,10 @@ function colorControl(
     onPointerDown: start as EventListener,
     onInput: ((event: Event) => {
       start();
-      previewAppearance(target, key, (event.target as HTMLInputElement).value);
+      previewAppearance(key, (event.target as HTMLInputElement).value);
     }) as EventListener,
     onChange: ((event: Event) => {
-      commitAppearance(target, key, (event.target as HTMLInputElement).value);
+      commands.commitAppearance(target, key, (event.target as HTMLInputElement).value);
       transactionStarted = false;
     }) as EventListener,
   });
@@ -183,12 +177,13 @@ function effectChoice(
   effect: BackgroundEffect,
   label: string,
   active: boolean,
+  commands: ContextMenuCommands,
 ): HTMLButtonElement {
   return h('button', {
     class: 'menu-item effect-choice',
     dataset: { effect },
     ariaPressed: String(active),
-    onClick: (() => setBackgroundEffect(target, effect)) as EventListener,
+    onClick: (() => commands.setBackgroundEffect(target, effect)) as EventListener,
   }, h('span', { class: 'choice-mark', ariaHidden: 'true' }), h('span', {}, label));
 }
 
@@ -198,12 +193,13 @@ function shadowChoice(
   value: ShadowType | ShadowDirection,
   label: string,
   active: boolean,
+  commands: ContextMenuCommands,
 ): HTMLButtonElement {
   return h('button', {
     class: 'menu-item effect-choice',
     dataset: { shadowKey: key, shadowValue: value },
     ariaPressed: String(active),
-    onClick: (() => commitAppearance(target, key, value)) as EventListener,
+    onClick: (() => commands.commitAppearance(target, key, value)) as EventListener,
   }, h('span', { class: 'choice-mark', ariaHidden: 'true' }), h('span', {}, label));
 }
 
@@ -227,67 +223,88 @@ function syncControls(menu: HTMLElement, appearance: AreaAppearance): void {
   });
 }
 
-function AppearanceMenu(target: AppearanceTarget, appearance: AreaAppearance): HTMLElement {
+function AppearanceMenu(
+  target: AppearanceTarget,
+  appearance: AreaAppearance,
+  commands: ContextMenuCommands,
+  onPreview: (target: AppearanceTarget, appearance: AreaAppearance) => void,
+): AppearanceMenuView {
+  let currentAppearance = appearance;
+  const preview: AppearancePreview = (key, value) => {
+    currentAppearance = { ...currentAppearance, [key]: value } as AreaAppearance;
+    onPreview(target, currentAppearance);
+  };
   const borderMenu = h('div', { class: 'submenu border-menu' },
     h('div', { class: 'menu-caption' }, 'BORDER'),
-    MenuItem('边线完全透明', false, () => transparentBorder(target)),
-    appearanceSlider(target, '粗细', 'borderWidth', appearance.borderWidth, 0, 8, 1, 'px'),
-    colorControl(target, '颜色', 'borderColor', appearance.borderColor),
-    appearanceSlider(target, '透明度', 'borderOpacity', appearance.borderOpacity, 0, 1, .05),
-    appearanceSlider(target, '圆角强度', 'radius', appearance.radius, 0, 24, 1, 'px'),
+    MenuItem('边线完全透明', false, () => commands.transparentBorder(target)),
+    appearanceSlider(target, '粗细', 'borderWidth', appearance.borderWidth, 0, 8, 1, commands, preview, 'px'),
+    colorControl(target, '颜色', 'borderColor', appearance.borderColor, commands, preview),
+    appearanceSlider(target, '透明度', 'borderOpacity', appearance.borderOpacity, 0, 1, .05, commands, preview),
+    appearanceSlider(target, '圆角强度', 'radius', appearance.radius, 0, 24, 1, commands, preview, 'px'),
   );
 
   const effects = h('div', { class: 'submenu effect-menu' },
     h('div', { class: 'menu-caption' }, 'SURFACE EFFECT'),
-    effectChoice(target, 'plain', '无效果', appearance.backgroundEffect === 'plain'),
-    effectChoice(target, 'glass', '毛玻璃', appearance.backgroundEffect === 'glass'),
-    effectChoice(target, 'frosted', '柔化磨砂', appearance.backgroundEffect === 'frosted'),
+    effectChoice(target, 'plain', '无效果', appearance.backgroundEffect === 'plain', commands),
+    effectChoice(target, 'glass', '毛玻璃', appearance.backgroundEffect === 'glass', commands),
+    effectChoice(target, 'frosted', '柔化磨砂', appearance.backgroundEffect === 'frosted', commands),
   );
 
   const shadowTypes = h('div', { class: 'submenu shadow-type-menu' },
     h('div', { class: 'menu-caption' }, 'SHADOW TYPE'),
-    shadowChoice(target, 'shadowType', 'hard', '硬边', appearance.shadowType === 'hard'),
-    shadowChoice(target, 'shadowType', 'blurred', '模糊', appearance.shadowType === 'blurred'),
+    shadowChoice(target, 'shadowType', 'hard', '硬边', appearance.shadowType === 'hard', commands),
+    shadowChoice(target, 'shadowType', 'blurred', '模糊', appearance.shadowType === 'blurred', commands),
   );
 
   const shadowDirections = h('div', { class: 'submenu shadow-direction-menu' },
     h('div', { class: 'menu-caption' }, 'SHADOW DIRECTION'),
-    shadowChoice(target, 'shadowDirection', 'top', '上', appearance.shadowDirection === 'top'),
-    shadowChoice(target, 'shadowDirection', 'top-right', '右上', appearance.shadowDirection === 'top-right'),
-    shadowChoice(target, 'shadowDirection', 'right', '右', appearance.shadowDirection === 'right'),
-    shadowChoice(target, 'shadowDirection', 'bottom-right', '右下', appearance.shadowDirection === 'bottom-right'),
-    shadowChoice(target, 'shadowDirection', 'bottom', '下', appearance.shadowDirection === 'bottom'),
-    shadowChoice(target, 'shadowDirection', 'bottom-left', '左下', appearance.shadowDirection === 'bottom-left'),
-    shadowChoice(target, 'shadowDirection', 'left', '左', appearance.shadowDirection === 'left'),
-    shadowChoice(target, 'shadowDirection', 'top-left', '左上', appearance.shadowDirection === 'top-left'),
+    shadowChoice(target, 'shadowDirection', 'top', '上', appearance.shadowDirection === 'top', commands),
+    shadowChoice(target, 'shadowDirection', 'top-right', '右上', appearance.shadowDirection === 'top-right', commands),
+    shadowChoice(target, 'shadowDirection', 'right', '右', appearance.shadowDirection === 'right', commands),
+    shadowChoice(target, 'shadowDirection', 'bottom-right', '右下', appearance.shadowDirection === 'bottom-right', commands),
+    shadowChoice(target, 'shadowDirection', 'bottom', '下', appearance.shadowDirection === 'bottom', commands),
+    shadowChoice(target, 'shadowDirection', 'bottom-left', '左下', appearance.shadowDirection === 'bottom-left', commands),
+    shadowChoice(target, 'shadowDirection', 'left', '左', appearance.shadowDirection === 'left', commands),
+    shadowChoice(target, 'shadowDirection', 'top-left', '左上', appearance.shadowDirection === 'top-left', commands),
   );
 
   const shadowMenu = h('div', { class: 'submenu shadow-menu' },
     h('div', { class: 'menu-caption' }, 'SHADOW'),
     Branch('类型', shadowTypes),
     Branch('方向', shadowDirections),
-    appearanceSlider(target, '强度', 'shadowOpacity', appearance.shadowOpacity, 0, .5, .01),
-    appearanceSlider(target, '大小', 'shadowSize', appearance.shadowSize, 0, 80, 1, 'px'),
+    appearanceSlider(target, '强度', 'shadowOpacity', appearance.shadowOpacity, 0, .5, .01, commands, preview),
+    appearanceSlider(target, '大小', 'shadowSize', appearance.shadowSize, 0, 80, 1, commands, preview, 'px'),
   );
 
   const backgroundMenu = h('div', { class: 'submenu background-menu' },
     h('div', { class: 'menu-caption' }, 'BACKGROUND'),
-    MenuItem('完全透明', false, () => transparentBackground(target)),
-    appearanceSlider(target, '透明度', 'backgroundOpacity', appearance.backgroundOpacity, 0, 1, .05),
-    appearanceSlider(target, '模糊度', 'backgroundBlur', appearance.backgroundBlur, 0, 40, 1, 'px'),
-    colorControl(target, '颜色', 'backgroundColor', appearance.backgroundColor),
+    MenuItem('完全透明', false, () => commands.transparentBackground(target)),
+    appearanceSlider(target, '透明度', 'backgroundOpacity', appearance.backgroundOpacity, 0, 1, .05, commands, preview),
+    appearanceSlider(target, '模糊度', 'backgroundBlur', appearance.backgroundBlur, 0, 40, 1, commands, preview, 'px'),
+    colorControl(target, '颜色', 'backgroundColor', appearance.backgroundColor, commands, preview),
     Branch('背景效果', effects),
     Branch('阴影', shadowMenu),
   );
 
-  return h('div', { class: 'submenu appearance-menu' },
+  const element = h('div', { class: 'submenu appearance-menu' },
     h('div', { class: 'menu-caption' }, 'DISPLAY PRESET'),
     Branch('边线', borderMenu),
     Branch('背景', backgroundMenu),
   );
+  return {
+    element,
+    sync: (next) => {
+      currentAppearance = next;
+      syncControls(element, next);
+    },
+  };
 }
 
-export function ContextMenu(state: AppState): ContextMenuView | null {
+export function ContextMenu(
+  state: AppState,
+  commands: ContextMenuCommands,
+  onPreview: (target: AppearanceTarget, appearance: AreaAppearance) => void,
+): ContextMenuView | null {
   const target = state.menu.target;
   if (!state.menu.open || !target) return null;
   const appearance = targetAppearance(state, target);
@@ -318,12 +335,14 @@ export function ContextMenu(state: AppState): ContextMenuView | null {
     menu.style.removeProperty('visibility');
   };
 
+  const appearanceMenu = AppearanceMenu(target, appearance, commands, onPreview);
+
   if (target.kind === 'topbar') {
     menu.append(
       h('div', { class: 'menu-caption' }, 'CHROME EDITOR / TOP BAR'),
-      Branch('顶部栏显示预设', AppearanceMenu(target, appearance)),
+      Branch('顶部栏显示预设', appearanceMenu.element),
     );
-    return { element: menu, position, sync: (next) => syncControls(menu, next) };
+    return { element: menu, position, sync: appearanceMenu.sync };
   }
 
   const area = findArea(currentLayer(state).root, target.areaId);
@@ -333,14 +352,14 @@ export function ContextMenu(state: AppState): ContextMenuView | null {
     editorMenu.append(h('button', {
       class: 'menu-item editor-choice',
       ariaPressed: String(editor.kind === area.editor),
-      onClick: (() => setEditor(area.id, editor.kind)) as EventListener,
+      onClick: (() => commands.setEditor(area.id, editor.kind)) as EventListener,
     }, h('span', { class: 'choice-mark', ariaHidden: 'true' }), h('span', {}, editor.label), EditorGlyph(editor.kind)));
   }
 
   menu.append(
     h('div', { class: 'menu-caption' }, `AREA / ${getEditor(area.editor).label}`),
     Branch('显示仪表类型', editorMenu),
-    Branch('Area 显示预设', AppearanceMenu(target, appearance)),
+    Branch('Area 显示预设', appearanceMenu.element),
   );
-  return { element: menu, position, sync: (next) => syncControls(menu, next) };
+  return { element: menu, position, sync: appearanceMenu.sync };
 }

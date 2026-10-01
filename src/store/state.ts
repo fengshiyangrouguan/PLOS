@@ -1,44 +1,42 @@
 import { LAYER_PRESETS } from '@/config/layers';
 import { TOPBAR_APPEARANCE } from '@/domain/appearance/defaults';
-import type { AppearanceTarget } from '@/domain/appearance/types';
-import { findFirstAreaId } from '@/domain/layout/tree';
 import { DEFAULT_SCREEN_DEPTH } from '@/domain/screen/types';
 import { clone } from '@/utils/clone';
 import { loadPersisted, persistNow, schedulePersist } from './persist';
 import { pushHistory, redo as redoHistory, undo as undoHistory } from './history';
+import {
+  createSliceObserver,
+  type EqualityFn,
+  type Selector,
+  type SliceListener,
+} from './slice-subscription';
 import type { AppState, LayerState } from './types';
 
-/**
- * 状态变更的语义范围。
- * 渲染器根据该信息更新对应的长期存活节点，避免一个滑块导致整个应用销毁重建。
- */
-export type StateChange =
-  | { type: 'all' }
-  | { type: 'layer' }
-  | { type: 'layout' }
-  | { type: 'geometry' }
-  | { type: 'appearance'; target: AppearanceTarget }
-  | { type: 'menu' }
-  | { type: 'settings' }
-  | { type: 'gap' }
-  | { type: 'screen-depth' }
-  | { type: 'chrome' };
+type Listener = (state: AppState, previous: AppState) => void;
+interface UpdateOptions { history?: boolean; persist?: boolean; }
 
-type Listener = (state: AppState, previous: AppState, change: StateChange) => void;
-interface UpdateOptions { historyLabel?: string; persist?: boolean; change?: StateChange; }
+/** 渲染模块只依赖该只读接口，不能从组件内部直接修改全局状态。 */
+export interface AppStateReader {
+  getState: () => AppState;
+  subscribeSlice: <T>(
+    selector: Selector<AppState, T>,
+    listener: SliceListener<T>,
+    equals?: EqualityFn<T>,
+  ) => () => void;
+}
 
 function createDefaultState(): AppState {
   const layers: Record<string, LayerState> = {};
   for (const preset of LAYER_PRESETS) {
     const root = clone(preset.root);
-    layers[preset.id] = { root, selectedAreaId: findFirstAreaId(root) };
+    layers[preset.id] = { root };
   }
   return {
     activeLayerId: 'command', layers, areaGap: 8, showCornerHints: true,
     screenDepth: clone(DEFAULT_SCREEN_DEPTH),
     topBarAppearance: clone(TOPBAR_APPEARANCE),
     settingsOpen: false, menu: { open: false, x: 0, y: 0, target: null },
-    themeId: 'light', syncStatus: 'idle',
+    themeId: 'light',
   };
 }
 
@@ -46,7 +44,10 @@ function hydrateState(): AppState {
   const defaults = createDefaultState();
   const persisted = loadPersisted();
   if (!persisted) return defaults;
-  const knownLayers = Object.fromEntries(Object.entries(persisted.layers).filter(([id]) => id in defaults.layers));
+  // 只提取当前 Layer 模型声明的 root，同时清掉旧版本持久化数据中的废弃字段。
+  const knownLayers = Object.fromEntries(Object.entries(persisted.layers)
+    .filter(([id]) => id in defaults.layers)
+    .map(([id, layer]) => [id, { root: layer.root }]));
   return {
     ...defaults,
     ...persisted,
@@ -54,7 +55,6 @@ function hydrateState(): AppState {
     screenDepth: { ...defaults.screenDepth, ...persisted.screenDepth },
     menu: defaults.menu,
     settingsOpen: false,
-    syncStatus: 'idle',
   };
 }
 
@@ -65,29 +65,40 @@ export function getState(): AppState { return state; }
 
 export function setState(updater: Partial<AppState> | ((current: AppState) => AppState), options: UpdateOptions = {}): void {
   const previous = state;
-  if (options.historyLabel) pushHistory(previous, options.historyLabel);
+  if (options.history) pushHistory(previous);
   const next = typeof updater === 'function' ? updater(state) : { ...state, ...updater };
   if (next === previous) return;
   state = next;
   if (options.persist !== false) schedulePersist(state);
-  const change = options.change ?? { type: 'all' };
-  for (const listener of listeners) listener(state, previous, change);
+  for (const listener of listeners) listener(state, previous);
 }
 
 export function replaceState(next: AppState): void {
   const previous = state;
   state = next;
   schedulePersist(state);
-  for (const listener of listeners) listener(state, previous, { type: 'all' });
+  for (const listener of listeners) listener(state, previous);
 }
 
-export function subscribe(listener: Listener): () => void {
-  listeners.add(listener);
-  return () => listeners.delete(listener);
+/**
+ * Zustand 风格的切片订阅。组件声明自己读取的状态片段，Store 只在该片段真正变化时通知它。
+ * selector 必须保持纯函数；高频鼠标、滑块预览和拖拽几何不应放入这里。
+ */
+export function subscribeSlice<T>(
+  selector: Selector<AppState, T>,
+  listener: SliceListener<T>,
+  equals: EqualityFn<T> = Object.is,
+): () => void {
+  const observe = createSliceObserver(state, selector, listener, equals);
+  const subscription: Listener = observe;
+  listeners.add(subscription);
+  return () => listeners.delete(subscription);
 }
 
-export function recordHistory(label: string): void {
-  pushHistory(state, label);
+export const appStateReader: AppStateReader = { getState, subscribeSlice };
+
+export function recordHistory(): void {
+  pushHistory(state);
 }
 
 export function undo(): boolean {

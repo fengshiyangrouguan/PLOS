@@ -1,5 +1,10 @@
-import type { LogLine } from '@/domain/editor/context';
 import { h } from '@/utils/dom';
+
+export interface LogLine {
+  time: string;
+  level: 'INFO' | 'WARN' | 'DEBUG';
+  text: string;
+}
 
 export function LogRow(line: LogLine): HTMLElement {
   return h('div', {},

@@ -534,7 +534,7 @@ body:is(.resize-x, .resize-y, .is-splitting) .area {
 .corner-handle.bottom-left::before { bottom: 2px; left: 2px; border-width: 0 0 1px 1px; }
 .corner-handle.bottom-right::before { right: 2px; bottom: 2px; border-width: 0 1px 1px 0; }
 .area:hover .corner-handle,
-.area.show-corner-hints .corner-handle:hover { opacity: 1; }
+.layout-root.show-corner-hints .corner-handle:hover { opacity: 1; }
 .area:hover .corner-handle::before,
 .corner-handle:focus-visible::before { opacity: 1; }
 
