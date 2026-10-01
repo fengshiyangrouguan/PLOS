@@ -452,18 +452,42 @@ input:focus-visible {
   position: relative;
   z-index: 5;
   background: transparent;
+  pointer-events: none;
+}
+
+.split-divider-handle {
+  position: absolute;
+  z-index: 1;
+  display: block;
+  background: transparent;
+  pointer-events: auto;
   touch-action: none;
 }
 
-.split-divider::before {
+.split-divider-handle::before {
   content: '';
   position: absolute;
+  inset: 0;
   transition: background-color 140ms ease;
 }
 
-.axis-x > .split-divider::before { inset: 0 -6px; cursor: col-resize; }
-.axis-y > .split-divider::before { inset: -6px 0; cursor: row-resize; }
-.split-divider:hover::before { background: rgb(40 121 136 / 18%); }
+.axis-x > .split-divider > .split-divider-handle {
+  top: 0;
+  bottom: 0;
+  left: calc(50% - 6px);
+  width: 12px;
+  cursor: col-resize;
+}
+
+.axis-y > .split-divider > .split-divider-handle {
+  right: 0;
+  left: 0;
+  top: calc(50% - 6px);
+  height: 12px;
+  cursor: row-resize;
+}
+
+.split-divider-handle:hover::before { background: rgb(40 121 136 / 18%); }
 body.resize-x { cursor: col-resize; user-select: none; }
 body.resize-y { cursor: row-resize; user-select: none; }
 
@@ -833,24 +857,115 @@ input[type='range']::-moz-range-thumb { width: 11px; height: 11px; border: 0; bo
 .modal-foot button:last-child { color: var(--color-paper); background: var(--color-fg); border: 0; }
 
 .split-preview {
+  --preview-rgb: 76 126 146;
   position: fixed;
-  z-index: 100;
+  z-index: 1000;
+  overflow: hidden;
   pointer-events: none;
-  background: rgb(40 121 136 / 12%);
-  border: 1px solid var(--color-accent);
+  opacity: 0;
+  background: rgb(var(--preview-rgb) / 13%);
+  border: 1px solid rgb(var(--preview-rgb) / 76%);
+  box-shadow: inset 0 0 0 1px rgb(255 255 255 / 24%);
+  clip-path: inset(10% 10% 10% 10%);
+  transition: opacity 160ms ease, clip-path 200ms cubic-bezier(.22, 1, .36, 1);
+  contain: paint;
 }
-.split-preview.merge-preview { background: rgb(57 118 109 / 16%); border-color: var(--positive); }
-.split-preview.merge-preview::after {
-  content: '合并覆盖';
+
+.split-preview.split-mode,
+.split-preview.merge-preview {
+  opacity: 1;
+  clip-path: inset(0 0 0 0);
+}
+
+.split-preview.merge-preview {
+  --preview-rgb: 170 113 75;
+  background: rgb(var(--preview-rgb) / 16%);
+}
+
+.split-preview.is-leaving {
+  opacity: 0;
+  clip-path: inset(48% 48% 48% 48%);
+}
+
+/*
+ * 条纹层比容器四周多出一格，使用 transform 循环移动。这样动画只进入合成阶段，
+ * 不会在 pointermove 时反复生成渐变或触发布局计算。
+ */
+.split-preview-stripes {
+  position: absolute;
+  inset: -48px;
+  background: repeating-linear-gradient(
+    135deg,
+    rgb(var(--preview-rgb) / 20%) 0 11px,
+    transparent 11px 24px
+  );
+  will-change: transform;
+  animation: split-preview-stripes 3.2s linear infinite;
+}
+
+.merge-indicator {
   position: absolute;
   top: 50%;
   left: 50%;
-  padding: 8px 12px;
-  color: var(--color-paper);
-  background: var(--color-fg);
-  font-size: 10px;
-  letter-spacing: 1px;
-  transform: translate(-50%, -50%);
+  display: grid;
+  width: min(156px, 62%);
+  height: 54px;
+  place-items: center;
+  color: #fff;
+  background: rgb(133 82 53 / 82%);
+  border: 1px solid rgb(255 255 255 / 68%);
+  opacity: 0;
+  clip-path: inset(50% 50% 50% 50%);
+  transform: translate(-50%, -50%) scale(.68);
+  transition: opacity 150ms ease, transform 220ms cubic-bezier(.22, 1, .36, 1), clip-path 220ms cubic-bezier(.22, 1, .36, 1);
+}
+
+.merge-indicator::before {
+  content: '';
+  position: absolute;
+  inset: -38px -54px;
+  z-index: -1;
+  background: radial-gradient(ellipse at center, rgb(var(--preview-rgb) / 34%) 0, rgb(var(--preview-rgb) / 13%) 42%, transparent 72%);
+  opacity: 0;
+  transform: scale(.35);
+  transition: opacity 180ms ease, transform 260ms cubic-bezier(.22, 1, .36, 1);
+}
+
+.merge-preview:not(.is-leaving) .merge-indicator {
+  opacity: 1;
+  clip-path: inset(0 0 0 0);
+  transform: translate(-50%, -50%) scale(1);
+}
+
+.merge-preview:not(.is-leaving) .merge-indicator::before {
+  opacity: 1;
+  transform: scale(1);
+}
+
+.merge-indicator span {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0;
+}
+
+.merge-indicator-corner {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  border-color: rgb(255 255 255 / 92%);
+  border-style: solid;
+  border-width: 0;
+}
+
+.merge-indicator-corner.top-left { top: 6px; left: 6px; border-top-width: 1px; border-left-width: 1px; }
+.merge-indicator-corner.top-right { top: 6px; right: 6px; border-top-width: 1px; border-right-width: 1px; }
+.merge-indicator-corner.bottom-left { bottom: 6px; left: 6px; border-bottom-width: 1px; border-left-width: 1px; }
+.merge-indicator-corner.bottom-right { right: 6px; bottom: 6px; border-right-width: 1px; border-bottom-width: 1px; }
+
+@keyframes split-preview-stripes {
+  /* 24px 纹理周期在 45deg 下对应约 33.94px 的水平位移，循环首尾保持同相。 */
+  to { transform: translate3d(33.941px, 0, 0); }
 }
 
 .toast { position: fixed; z-index: 60; bottom: 36px; left: 50%; transform: translateX(-50%); pointer-events: none; }

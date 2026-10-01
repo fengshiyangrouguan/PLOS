@@ -84,10 +84,20 @@ export function LayoutView(node: LayoutNode, runtime: LayoutRuntime): MountedLay
   const element = h('div', { class: `split-node axis-${node.axis}`, dataset: { split: node.id } });
   element.style.setProperty('--split-ratio', `${node.ratio}%`);
   element.style.setProperty('--split-direction', node.axis === 'x' ? 'row' : 'column');
-  const divider = h('div', {
-    class: 'split-divider', role: 'separator', ariaOrientation: node.axis === 'x' ? 'vertical' : 'horizontal',
+  /*
+   * 布局间隙和拖拽命中面必须是两个不同概念：间隙可以为 0，但命中面仍要保持 12px，
+   * 否则既无法被曲面投影器测量，也无法稳定接收指针事件。命中面作为独立 surface
+   * 与相邻 Area 使用同一投影模型，因此视觉位置、实际命中位置和曲面纵深始终一致。
+   */
+  const dividerHandle = h('div', {
+    class: 'split-divider-handle',
+    role: 'separator',
+    ariaLabel: '调整 Area 分割比例',
+    ariaOrientation: node.axis === 'x' ? 'vertical' : 'horizontal',
+    dataset: { depthSurface: 'split-divider' },
     onPointerDown: ((event: PointerEvent) => runtime.drag.startDividerDrag(event, node.id, node.axis, element)) as unknown as EventListener,
   });
+  const divider = h('div', { class: 'split-divider' }, dividerHandle);
   const first = LayoutView(node.first, runtime);
   const second = LayoutView(node.second, runtime);
   element.append(

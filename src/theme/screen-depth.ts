@@ -150,7 +150,15 @@ export function mountScreenDepth(
     setLayoutInteraction: (active) => {
       if (active === layoutInteraction) return;
       layoutInteraction = active;
-      if (!active) projection.invalidate();
+      if (active) {
+        /*
+         * 拖拽控制器会在本次 pointerdown 内立即读取 Area 的逻辑矩形，因此这里必须
+         * 同步关闭 CSS 投影，不能等到下一次 RAF。写 dataset 只切换合成层 transform，
+         * 随后的 getBoundingClientRect() 会得到曲面变形前的布局坐标。
+         */
+        stage.dataset.depthEnabled = 'false';
+      }
+      else projection.invalidate();
       requestFrame();
     },
     refreshSurfaces,
