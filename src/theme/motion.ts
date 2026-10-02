@@ -89,3 +89,15 @@ export function revealContent(element: HTMLElement): void {
     { duration: 300, easing: ENTER_EASE },
   );
 }
+
+/**
+ * Workspace 根节点包含曲面投影器要测量的 Area，因此这里只淡入，不移动几何祖先。
+ * Editor 内容仍可继续使用 revealContent() 的轻微位移，两类动画互不污染坐标缓存。
+ */
+export function revealWorkspace(element: HTMLElement): void {
+  if (reducedMotion()) return;
+  element.animate(
+    [{ opacity: 0.3 }, { opacity: 1 }],
+    { duration: 300, easing: ENTER_EASE },
+  );
+}

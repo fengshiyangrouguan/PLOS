@@ -1,12 +1,19 @@
 import type { ScreenDepthSettings } from '@/domain/screen/types';
-import { RadialSurfaceProjection } from './radial-surface-projection';
+import {
+  RadialSurfaceProjection,
+  type SurfacePoint,
+  type SurfaceRect,
+} from './radial-surface-projection';
 
 export interface ScreenDepthController {
   update: (settings: ScreenDepthSettings) => void;
   setSuspended: (suspended: boolean) => void;
   setLayoutInteraction: (active: boolean) => void;
   getLogicalRect: (element: HTMLElement) => DOMRect;
-  getInteractionBlend: () => number;
+  screenToLayout: (point: SurfacePoint) => SurfacePoint;
+  layoutToScreen: (point: SurfacePoint) => SurfacePoint;
+  registerSurface: (element: HTMLElement, rect: SurfaceRect) => () => void;
+  setSurfaceRect: (element: HTMLElement, rect: SurfaceRect) => void;
   refreshSurfaces: () => void;
   dispose: () => void;
 }
@@ -175,7 +182,21 @@ export function mountScreenDepth(
       requestFrame();
     },
     getLogicalRect: (element) => projection.getLogicalRect(element),
-    getInteractionBlend: () => interactionBlend,
+    screenToLayout: (point) => projection.screenToLayout(point),
+    layoutToScreen: (point) => projection.layoutToScreen(point),
+    registerSurface: (element, rect) => {
+      const unregister = projection.registerSurface(element, rect);
+      /*
+       * 动态预览在加入 DOM 的同一任务中就取得当前投影矩阵，避免先显示一帧平面矩形，
+       * 下一帧才跳到曲面位置。后续位置变化仍由 RAF 合帧，保持拖拽热路径轻量。
+       */
+      updateProjection();
+      return unregister;
+    },
+    setSurfaceRect: (element, rect) => {
+      projection.setSurfaceRect(element, rect);
+      requestFrame();
+    },
     refreshSurfaces,
     dispose: () => {
       stage.removeEventListener('pointermove', handlePointerMove);

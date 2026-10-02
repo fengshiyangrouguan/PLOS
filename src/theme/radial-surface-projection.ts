@@ -3,6 +3,13 @@ export interface SurfacePoint {
   y: number;
 }
 
+export interface SurfaceRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+}
+
 interface MeasuredSurface {
   element: HTMLElement;
   width: number;
@@ -42,6 +49,49 @@ export function projectSurfacePoint(
     x: width / 2 + (x * (1 + curvature * radius) - tangentX) * fit * height / 2,
     y: height / 2 + (y * (1 + curvature * radius) - tangentY) * fit * height / 2,
   };
+}
+
+/**
+ * 把曲面后的点还原到唯一的布局坐标。
+ *
+ * 径向模型包含三次项，直接写解析逆函数既冗长又容易失稳。这里使用二维 Newton 迭代，
+ * 每轮只调用三次正向投影；当前深度范围内通常 3～4 轮即可收敛。每个指针帧只转换一个点，
+ * 成本远低于一次 DOM 测量，同时让交互层完全不需要了解曲率和过渡权重。
+ */
+export function unprojectSurfacePoint(
+  point: SurfacePoint,
+  width: number,
+  height: number,
+  depth: number,
+  pointer: SurfacePoint,
+): SurfacePoint {
+  if (depth < 0.00001) return { ...point };
+  const guess = { ...point };
+  const step = Math.max(0.25, Math.min(width, height) * 0.0005);
+
+  for (let iteration = 0; iteration < 7; iteration += 1) {
+    const projected = projectSurfacePoint(guess, width, height, depth, pointer);
+    const errorX = projected.x - point.x;
+    const errorY = projected.y - point.y;
+    if (Math.abs(errorX) + Math.abs(errorY) < 0.0001) break;
+
+    const projectedX = projectSurfacePoint(
+      { x: guess.x + step, y: guess.y }, width, height, depth, pointer,
+    );
+    const projectedY = projectSurfacePoint(
+      { x: guess.x, y: guess.y + step }, width, height, depth, pointer,
+    );
+    const j11 = (projectedX.x - projected.x) / step;
+    const j21 = (projectedX.y - projected.y) / step;
+    const j12 = (projectedY.x - projected.x) / step;
+    const j22 = (projectedY.y - projected.y) / step;
+    const determinant = j11 * j22 - j12 * j21;
+    if (Math.abs(determinant) < 1e-9) break;
+
+    guess.x -= (j22 * errorX - j12 * errorY) / determinant;
+    guess.y -= (-j21 * errorX + j11 * errorY) / determinant;
+  }
+  return guess;
 }
 
 /** 根据目标四边形求 DOM 可直接使用的齐次投影矩阵。 */
@@ -84,9 +134,12 @@ export class RadialSurfaceProjection {
   private readonly onInvalidated: () => void;
   private surfaces: HTMLElement[] = [];
   private measured: MeasuredSurface[] = [];
+  private readonly logicalRectOverrides = new Map<HTMLElement, SurfaceRect>();
   private dirty = true;
   private width = 1;
   private height = 1;
+  private depth = 0;
+  private pointer: SurfacePoint = { x: 0, y: 0 };
   private readonly observer: ResizeObserver;
 
   constructor(
@@ -114,9 +167,27 @@ export class RadialSurfaceProjection {
       // 清除旧控制器遗留的内联 transform，投影只能由一个矩阵来源控制。
       element.style.removeProperty('transform');
       element.classList.add('screen-depth-surface');
-      this.observer.observe(element);
+      if (!this.logicalRectOverrides.has(element)) this.observer.observe(element);
     }
     this.dirty = true;
+  }
+
+  /** 注册运行时 surface；预览窗口用它加入同一投影通道，无需进入 Store 或重建布局。 */
+  registerSurface(element: HTMLElement, rect: SurfaceRect): () => void {
+    if (!this.surfaces.includes(element)) this.surfaces.push(element);
+    this.logicalRectOverrides.set(element, { ...rect });
+    element.style.removeProperty('transform');
+    element.classList.add('screen-depth-surface');
+    this.dirty = true;
+    return () => this.unregisterSurface(element);
+  }
+
+  /** 高频更新动态 surface 的逻辑矩形，只替换缓存项，不读取 DOM。 */
+  setSurfaceRect(element: HTMLElement, rect: SurfaceRect): void {
+    this.logicalRectOverrides.set(element, { ...rect });
+    const index = this.measured.findIndex((surface) => surface.element === element);
+    if (index >= 0) this.measured[index] = this.measuredFromRect(element, rect);
+    else this.dirty = true;
   }
 
   invalidate(): void {
@@ -131,22 +202,54 @@ export class RadialSurfaceProjection {
    * 能在视觉仍处于曲面过渡时，始终使用稳定的平面布局坐标。
    */
   getLogicalRect(element: HTMLElement): DOMRect {
+    const override = this.logicalRectOverrides.get(element);
+    if (override) return new DOMRect(override.left, override.top, override.width, override.height);
     if (this.dirty) this.measure();
     const surface = this.measured.find((item) => item.element === element);
-    if (!surface) return element.getBoundingClientRect();
+    if (surface) return new DOMRect(surface.origin.x, surface.origin.y, surface.width, surface.height);
 
     const stageRect = this.stage.getBoundingClientRect();
     const scaleX = stageRect.width / Math.max(1, this.stage.offsetWidth) || 1;
     const scaleY = stageRect.height / Math.max(1, this.stage.offsetHeight) || 1;
+    const rect = element.getBoundingClientRect();
     return new DOMRect(
-      stageRect.left + surface.origin.x * scaleX,
-      stageRect.top + surface.origin.y * scaleY,
-      surface.width * scaleX,
-      surface.height * scaleY,
+      (rect.left - stageRect.left) / scaleX,
+      (rect.top - stageRect.top) / scaleY,
+      rect.width / scaleX,
+      rect.height / scaleY,
     );
   }
 
+  /** PointerEvent 的 client 坐标只在此处跨越到曲面前的 layout 坐标。 */
+  screenToLayout(point: SurfacePoint): SurfacePoint {
+    const stageRect = this.stage.getBoundingClientRect();
+    const width = Math.max(1, this.stage.offsetWidth);
+    const height = Math.max(1, this.stage.offsetHeight);
+    const scaleX = stageRect.width / width || 1;
+    const scaleY = stageRect.height / height || 1;
+    return unprojectSurfacePoint(
+      { x: (point.x - stageRect.left) / scaleX, y: (point.y - stageRect.top) / scaleY },
+      width,
+      height,
+      this.depth,
+      this.pointer,
+    );
+  }
+
+  /** 调试、浮层和后续 Canvas Editor 可复用的 layout → client 坐标出口。 */
+  layoutToScreen(point: SurfacePoint): SurfacePoint {
+    const stageRect = this.stage.getBoundingClientRect();
+    const width = Math.max(1, this.stage.offsetWidth);
+    const height = Math.max(1, this.stage.offsetHeight);
+    const scaleX = stageRect.width / width || 1;
+    const scaleY = stageRect.height / height || 1;
+    const projected = projectSurfacePoint(point, width, height, this.depth, this.pointer);
+    return { x: stageRect.left + projected.x * scaleX, y: stageRect.top + projected.y * scaleY };
+  }
+
   update(depth: number, pointer: SurfacePoint, keepEnabledAtRest = false): void {
+    this.depth = depth;
+    this.pointer = { ...pointer };
     if (depth < 0.00001) {
       if (keepEnabledAtRest) {
         // 交互展平期间保留预分片材质，只撤销几何矩阵，避免顶部栏玻璃层在终点闪切。
@@ -177,6 +280,32 @@ export class RadialSurfaceProjection {
       element.classList.remove('screen-depth-surface');
       element.style.removeProperty('--screen-projection');
     }
+    this.logicalRectOverrides.clear();
+  }
+
+  private unregisterSurface(element: HTMLElement): void {
+    this.observer.unobserve(element);
+    this.surfaces = this.surfaces.filter((surface) => surface !== element);
+    this.measured = this.measured.filter((surface) => surface.element !== element);
+    this.logicalRectOverrides.delete(element);
+    element.classList.remove('screen-depth-surface');
+    element.style.removeProperty('--screen-projection');
+  }
+
+  private measuredFromRect(element: HTMLElement, rect: SurfaceRect): MeasuredSurface {
+    const origin = { x: rect.left, y: rect.top };
+    return {
+      element,
+      width: rect.width,
+      height: rect.height,
+      origin,
+      corners: [
+        { x: rect.left, y: rect.top },
+        { x: rect.left + rect.width, y: rect.top },
+        { x: rect.left + rect.width, y: rect.top + rect.height },
+        { x: rect.left, y: rect.top + rect.height },
+      ],
+    };
   }
 
   private measure(): void {
@@ -190,6 +319,11 @@ export class RadialSurfaceProjection {
     this.measured = [];
 
     for (const element of this.surfaces) {
+      const override = this.logicalRectOverrides.get(element);
+      if (override) {
+        this.measured.push(this.measuredFromRect(element, override));
+        continue;
+      }
       const width = element.offsetWidth;
       const height = element.offsetHeight;
       if (!width || !height || !element.getClientRects().length) continue;

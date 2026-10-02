@@ -1,6 +1,7 @@
 import {
   projectSurfacePoint,
   surfaceQuadMatrix,
+  unprojectSurfacePoint,
 } from '../src/theme/radial-surface-projection.ts';
 
 const EPSILON = 1e-8;
@@ -25,6 +26,28 @@ for (const [width, height] of [[800, 600], [1920, 1080], [900, 1200]]) {
     const projected = projectSurfacePoint(point, width, height, 0, { x: 0.8, y: -0.6 });
     assert(almostEqual(projected.x, point.x), `恒等映射的 x 坐标错误：${JSON.stringify(projected)}`);
     assert(almostEqual(projected.y, point.y), `恒等映射的 y 坐标错误：${JSON.stringify(projected)}`);
+  }
+}
+
+/**
+ * 输入边界必须满足 layout → screen → layout 往返不变量。
+ * 覆盖横屏、竖屏、不同曲率以及鼠标切向偏移，防止拖拽重新依赖经验 offset。
+ */
+for (const [width, height] of [[800, 600], [1920, 1080], [900, 1200]]) {
+  for (const depth of [0, 0.18, 0.62, 1]) {
+    for (const pointer of [{ x: 0, y: 0 }, { x: 0.7, y: -0.45 }, { x: -0.8, y: 0.6 }]) {
+      for (const point of [
+        { x: 0, y: 0 },
+        { x: width, y: height },
+        { x: width * 0.13, y: height * 0.81 },
+        { x: width * 0.74, y: height * 0.26 },
+      ]) {
+        const projected = projectSurfacePoint(point, width, height, depth, pointer);
+        const restored = unprojectSurfacePoint(projected, width, height, depth, pointer);
+        assert(almostEqual(restored.x, point.x, 1e-4), `逆投影 x 往返错误：${JSON.stringify({ width, height, depth, pointer, point, restored })}`);
+        assert(almostEqual(restored.y, point.y, 1e-4), `逆投影 y 往返错误：${JSON.stringify({ width, height, depth, pointer, point, restored })}`);
+      }
+    }
   }
 }
 
@@ -85,4 +108,4 @@ sourceQuad.forEach((point, index) => {
   assert(almostEqual(mapped.y, target.y, 1e-6), `四边形角点 ${index} 的 y 映射错误`);
 });
 
-console.log('投影测试通过：恒等映射、径向对称与四角齐次矩阵均正确。');
+console.log('投影测试通过：恒等映射、正反投影往返、径向对称与四角齐次矩阵均正确。');

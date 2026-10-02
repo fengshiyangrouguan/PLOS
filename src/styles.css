@@ -86,6 +86,14 @@ body {
   overflow: hidden;
 }
 
+/* 仅承载需要跟随曲面的瞬态 UI；自身不变形，也不参与命中测试。 */
+.projection-layer {
+  position: absolute;
+  z-index: 1000;
+  inset: 0;
+  pointer-events: none;
+}
+
 /*
  * 每个 UI 区块是同一径向曲面上的切平面。控制器从区块四角计算 matrix3d；这里不再
  * 叠加 perspective、rotate、暗角或反射渐变，避免出现多个互相矛盾的纵深来源。
@@ -858,8 +866,8 @@ input[type='range']::-moz-range-thumb { width: 11px; height: 11px; border: 0; bo
 
 .split-preview {
   --preview-rgb: 76 126 146;
-  position: fixed;
-  z-index: 1000;
+  position: absolute;
+  z-index: 1;
   overflow: hidden;
   pointer-events: none;
   opacity: 0;

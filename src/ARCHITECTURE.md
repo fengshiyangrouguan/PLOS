@@ -59,6 +59,20 @@ Store 只负责保存可持久化状态和通知订阅者，不再要求 Action 
 布局树的 `replaceNode`、`removeArea`、`updateArea` 和 `updateSplit` 均为不可变更新。分割 Area 时保留
 原 Area ID，只为新 Area 分配 ID，以保证局部订阅、外部引用和运行时资源能够保持稳定。
 
+### 坐标空间契约
+
+布局坐标是交互系统唯一的几何真值。Area 矩形、Divider 位置、分割比例、相邻 Area 命中与拖拽预览
+全部使用曲面变形前、相对 `screen-surface` 左上角的坐标。`PointerEvent.clientX/clientY` 只允许在
+`DragController` 的输入边界通过 `screenToLayout()` 转换一次；其后的领域逻辑不得再读取 client 坐标。
+
+`RadialSurfaceProjection` 是唯一知道曲率、鼠标跟随和交互展平进度的模块。它提供
+`layoutToScreen()` / `screenToLayout()` 正反投影，并允许拖拽预览以逻辑矩形注册为动态 Surface。
+因此预览节点与 Area 使用同一条投影通道，但预览控制器本身仍只保存布局坐标。
+
+禁止在拖拽状态中保存 `interactionBlend`、投影后的偏移或按过渡进度缩放的补偿量。这类字段会把
+视觉动画的瞬时状态混入布局算法，造成“操作完成后立即再次操作才错位”的时序问题。曲面动画可以
+独立改变或暂停，只要正反投影满足 `layout → screen → layout` 往返不变量，交互逻辑就无需改动。
+
 ## 控件事务
 
 外观及设置滑块遵循“开始、预览、提交”三阶段：

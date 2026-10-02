@@ -7,7 +7,7 @@ import type { AppStateReader } from '@/store/state';
 import type { AppState } from '@/store/types';
 import { applyTheme } from '@/theme/apply';
 import { mountFractalBackground } from '@/theme/fractal-background';
-import { revealContent, SurfaceTransition } from '@/theme/motion';
+import { revealWorkspace, SurfaceTransition } from '@/theme/motion';
 import { mountScreenDepth } from '@/theme/screen-depth';
 import { themes } from '@/theme/tokens';
 import { h } from '@/utils/dom';
@@ -61,7 +61,9 @@ export function mountApp(
   const overlayRoot = h('div', { class: 'overlay-root' }, menuLayer, settingsLayer);
   const toast = h('div', { id: 'toast', class: 'toast', role: 'status' });
   const shell = h('div', { class: 'app-shell' }, topbar, workspace, overlayRoot, toast);
-  const screenSurface = h('div', { class: 'screen-surface' }, background, shell);
+  // 动态投影层与普通浮层分开：拖拽预览属于曲面，菜单和设置始终属于屏幕平面。
+  const projectionLayer = h('div', { class: 'projection-layer', ariaHidden: 'true' });
+  const screenSurface = h('div', { class: 'screen-surface' }, background, shell, projectionLayer);
 
   root.replaceChildren(screenSurface);
   const disposeBackground = mountFractalBackground(background);
@@ -73,7 +75,11 @@ export function mountApp(
     setSplitRatio: commands.layout.setSplitRatio,
     setLayoutInteraction: screenDepth.setLayoutInteraction,
     getLogicalRect: screenDepth.getLogicalRect,
-    getInteractionBlend: screenDepth.getInteractionBlend,
+    screenToLayout: screenDepth.screenToLayout,
+  }, {
+    root: projectionLayer,
+    registerSurface: screenDepth.registerSurface,
+    setSurfaceRect: screenDepth.setSurfaceRect,
   });
 
   const disposers: Array<() => void> = [];
@@ -102,7 +108,7 @@ export function mountApp(
     });
     layoutRoot.replaceChildren(mountedLayout.element);
     mountedLayout.mount();
-    revealContent(mountedLayout.element);
+    revealWorkspace(mountedLayout.element);
     screenDepth.refreshSurfaces();
   };
 
