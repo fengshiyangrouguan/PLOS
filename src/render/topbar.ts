@@ -5,6 +5,11 @@ import { h } from '@/utils/dom';
 import { UiGlyph } from './components/Glyph';
 
 const TOPBAR_DEPTH_SEGMENTS = 9;
+const TIME_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
+  hour: '2-digit',
+  minute: '2-digit',
+  second: '2-digit',
+});
 
 export interface TopBarCommands {
   switchLayer: (layerId: string) => void;
@@ -12,8 +17,17 @@ export interface TopBarCommands {
   openMenu: (x: number, y: number) => void;
 }
 
+export interface TopBarView {
+  /** 顶栏的根节点；外部只负责把它挂载到 App Shell。 */
+  element: HTMLElement;
+  /** 同步活动 Layer 和外观，不重建时钟节点。 */
+  sync: (state: AppState) => void;
+  /** 停止时钟更新，释放顶栏拥有的运行时资源。 */
+  dispose: () => void;
+}
+
 function formatTime(): string {
-  return new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit' }).format(new Date());
+  return TIME_FORMATTER.format(new Date());
 }
 
 function layerButton(
@@ -55,9 +69,10 @@ export function syncTopBar(element: HTMLElement, state: AppState): void {
   });
 }
 
-export function TopBar(state: AppState, commands: TopBarCommands): HTMLElement {
+export function TopBar(state: AppState, commands: TopBarCommands): TopBarView {
   const left = LAYER_PRESETS.slice(0, 2);
   const right = LAYER_PRESETS.slice(2);
+  const clock = h('time', {}, formatTime());
   const element = h('header', {
     class: 'topbar',
     dataset: { editor: 'topbar' },
@@ -73,7 +88,7 @@ export function TopBar(state: AppState, commands: TopBarCommands): HTMLElement {
     h('div', { class: 'top-status right-status', dataset: { depthSurface: 'topbar-content' } },
       h('span', { class: 'status-unit', title: '网络连接正常' }, UiGlyph('signal'), h('span', {}, 'LINK')),
       h('span', { class: 'status-unit', title: '电量 78%' }, UiGlyph('battery'), h('span', {}, '78%')),
-      h('time', { id: 'clock' }, formatTime()),
+      clock,
     ),
     h('div', { class: 'workspace-rail' },
       h('span', { class: 'rail-line', dataset: { depthSurface: 'topbar-control' } }),
@@ -84,5 +99,12 @@ export function TopBar(state: AppState, commands: TopBarCommands): HTMLElement {
     ),
   );
   applyTopBarAppearance(element, state.topBarAppearance);
-  return element;
+  const clockTimer = window.setInterval(() => {
+    clock.textContent = formatTime();
+  }, 1000);
+  return {
+    element,
+    sync: (nextState) => syncTopBar(element, nextState),
+    dispose: () => window.clearInterval(clockTimer),
+  };
 }

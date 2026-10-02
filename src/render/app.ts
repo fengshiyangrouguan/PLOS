@@ -7,14 +7,14 @@ import type { AppStateReader } from '@/store/state';
 import type { AppState } from '@/store/types';
 import { applyTheme } from '@/theme/apply';
 import { mountFractalBackground } from '@/theme/fractal-background';
-import { revealWorkspace, SurfaceTransition } from '@/theme/motion';
+import { SurfaceTransition } from '@/theme/motion';
 import { mountScreenDepth } from '@/theme/screen-depth';
 import { themes } from '@/theme/tokens';
 import { h } from '@/utils/dom';
 import { ContextMenu, type ContextMenuCommands, type ContextMenuView } from './context-menu';
 import { layoutStructureKey, LayoutView, type MountedLayout } from './layout';
 import { SettingsModal, type SettingsCommands } from './settings';
-import { syncTopBar, TopBar, type TopBarCommands } from './topbar';
+import { TopBar, type TopBarCommands, type TopBarView } from './topbar';
 
 export interface DashboardCommands {
   topbar: TopBarCommands;
@@ -53,14 +53,14 @@ export function mountApp(
 ): AppRenderer {
   const initialState = store.getState();
   const background = h('canvas', { class: 'app-background', ariaHidden: 'true' });
-  const topbar = TopBar(initialState, commands.topbar);
+  const topbar: TopBarView = TopBar(initialState, commands.topbar);
   const layoutRoot = h('div', { class: 'layout-root' });
   const workspace = h('main', { class: 'workspace', id: 'workspace' }, layoutRoot);
   const menuLayer = h('div', { class: 'overlay-layer menu-layer' });
   const settingsLayer = h('div', { class: 'overlay-layer settings-layer' });
   const overlayRoot = h('div', { class: 'overlay-root' }, menuLayer, settingsLayer);
   const toast = h('div', { id: 'toast', class: 'toast', role: 'status' });
-  const shell = h('div', { class: 'app-shell' }, topbar, workspace, overlayRoot, toast);
+  const shell = h('div', { class: 'app-shell' }, topbar.element, workspace, overlayRoot, toast);
   // 动态投影层与普通浮层分开：拖拽预览属于曲面，菜单和设置始终属于屏幕平面。
   const projectionLayer = h('div', { class: 'projection-layer', ariaHidden: 'true' });
   const screenSurface = h('div', { class: 'screen-surface' }, background, shell, projectionLayer);
@@ -90,14 +90,14 @@ export function mountApp(
 
   const previewAppearance = (target: AppearanceTarget, appearance: AreaAppearance): void => {
     if (target.kind === 'topbar') {
-      applyTopBarAppearance(topbar, appearance);
+      applyTopBarAppearance(topbar.element, appearance);
       return;
     }
     const element = layoutRoot.querySelector<HTMLElement>(`[data-area="${target.areaId}"]`);
     if (element) applyAreaAppearance(element, appearance);
   };
 
-  const renderWorkspace = (): void => {
+  const renderWorkspace = (animateInitial = false): void => {
     mountedLayout?.dispose();
     const state = store.getState();
     mountedLayout = LayoutView(currentLayer(state).root, {
@@ -105,10 +105,10 @@ export function mountApp(
       drag,
       openMenu: commands.layout.openMenu,
       geometryChanged: screenDepth.refreshSurfaces,
+      animateInitial,
     });
     layoutRoot.replaceChildren(mountedLayout.element);
     mountedLayout.mount();
-    revealWorkspace(mountedLayout.element);
     screenDepth.refreshSurfaces();
   };
 
@@ -177,7 +177,7 @@ export function mountApp(
   // 先订阅拓扑，再挂载子组件；Layer/分割变化时父订阅会先销毁旧 Area 的订阅。
   disposers.push(store.subscribeSlice(
     (state) => `${state.activeLayerId}:${layoutStructureKey(currentLayer(state).root)}`,
-    renderWorkspace,
+    () => renderWorkspace(true),
   ));
   renderWorkspace();
 
@@ -204,11 +204,11 @@ export function mountApp(
 
   disposers.push(store.subscribeSlice(
     (state) => state.activeLayerId,
-    () => syncTopBar(topbar, store.getState()),
+    () => topbar.sync(store.getState()),
   ));
   disposers.push(store.subscribeSlice(
     (state) => state.topBarAppearance,
-    (appearance) => applyTopBarAppearance(topbar, appearance),
+    (appearance) => applyTopBarAppearance(topbar.element, appearance),
   ));
   disposers.push(store.subscribeSlice(
     (state) => state.screenDepth,
@@ -238,12 +238,26 @@ export function mountApp(
   ));
   screenDepth.setSuspended(initialState.menu.open || initialState.settingsOpen);
 
+  /**
+   * 浮层所有者负责判断外部点击。这里不依赖菜单内部 class，也不让入口层接触浮层 DOM；
+   * 设置面板属于同一组 Overlay，点击它时不应误伤仍在退出或同步中的菜单生命周期。
+   */
+  const menuDismissHandler = (event: PointerEvent): void => {
+    if (event.button === 2 || !store.getState().menu.open) return;
+    const target = event.target;
+    if (!(target instanceof Node)) return;
+    if (!menuLayer.contains(target) && !settingsLayer.contains(target)) dismissMenu();
+  };
+  document.addEventListener('pointerdown', menuDismissHandler);
+
   return {
     dismissMenu,
     dismissSettings,
     dispose: () => {
       for (const dispose of disposers) dispose();
+      document.removeEventListener('pointerdown', menuDismissHandler);
       mountedLayout?.dispose();
+      topbar.dispose();
       drag.dispose();
       disposeBackground();
       screenDepth.dispose();

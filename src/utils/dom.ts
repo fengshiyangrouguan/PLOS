@@ -28,7 +28,7 @@ export interface ElementProps {
 }
 
 /**
- * 极简 DOM 工厂：直接创建真实节点并绑定事件，避免 HTML 字符串和二次 querySelector 绑定。
+ * DOM 工厂：直接创建真实节点并绑定事件，避免 HTML 字符串和二次 querySelector 绑定。
  */
 export function h<K extends keyof HTMLElementTagNameMap>(
   tag: K,

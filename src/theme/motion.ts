@@ -92,26 +92,21 @@ export class SurfaceTransition {
   }
 }
 
-/** 工作区结构变化只对新内容执行一次短促揭示，不截取整页位图。 */
+/**
+ * 工作区结构变化只对新内容执行一次短促揭示，不截取整页位图。
+ *
+ * 这里刻意不用 transform/translate：area-content 位于 `.area { overflow: hidden auto }`
+ * 滚动容器内部，位移动画会被浏览器暂时计入 scrollable overflow，导致 Layer 切换时
+ * 每个 Area 的滚动条先出现再消失。opacity + clip-path 只改变绘制结果，不改变布局尺寸
+ * 和滚动范围，因此不会干扰滚动条、投影测量或 Area 角点命中判断。
+ */
 export function revealContent(element: HTMLElement): void {
   if (reducedMotion()) return;
   element.animate(
     [
-      { opacity: 0.3, translate: '0 8px' },
-      { opacity: 1, translate: '0 0' },
+      { opacity: 0.3, clipPath: 'inset(8px 0 0 0)' },
+      { opacity: 1, clipPath: 'inset(0 0 0 0)' },
     ],
-    { duration: 300, easing: ENTER_EASE },
-  );
-}
-
-/**
- * Workspace 根节点包含曲面投影器要测量的 Area，因此这里只淡入，不移动几何祖先。
- * Editor 内容仍可继续使用 revealContent() 的轻微位移，两类动画互不污染坐标缓存。
- */
-export function revealWorkspace(element: HTMLElement): void {
-  if (reducedMotion()) return;
-  element.animate(
-    [{ opacity: 0.3 }, { opacity: 1 }],
     { duration: 300, easing: ENTER_EASE },
   );
 }

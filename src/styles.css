@@ -98,7 +98,12 @@ body {
  * 每个 UI 区块是同一径向曲面上的切平面。控制器从区块四角计算 matrix3d；这里不再
  * 叠加 perspective、rotate、暗角或反射渐变，避免出现多个互相矛盾的纵深来源。
  */
-.screen-depth-surface {
+/*
+ * 拖拽预览虽然也注册到曲面投影通道，但它拥有独立的 clip-path 展开/收回动画。
+ * 如果把通用 Surface 的 transition-property 强行覆盖到预览上，外层透明区域会瞬间
+ * 出现或消失，而 Merge 中心指示器仍会正常播放，最终造成两段动画不同步。
+ */
+.screen-depth-surface:not(.split-preview) {
   transition-property: opacity, color, background-color, border-color !important;
 }
 

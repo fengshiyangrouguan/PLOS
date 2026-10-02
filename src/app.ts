@@ -28,7 +28,7 @@ export function startApp(): () => void {
   const root = requiredElement<HTMLElement>('#app');
   const commands: DashboardCommands = {
     topbar: {
-      switchLayer,
+      switchLayer: switchLayer,
       openSettings: () => setSettingsOpen(true),
       openMenu: openTopBarMenu,
     },
@@ -68,6 +68,7 @@ export function startApp(): () => void {
       else if (getState().settingsOpen) renderer?.dismissSettings();
       return;
     }
+    //TODO: 如果用户正在输入框里输入，Ctrl+Z 应该撤销输入，而不是撤销应用状态。加一个检查
     if (!(event.ctrlKey || event.metaKey)) return;
     if (event.key.toLowerCase() === 'z' && !event.shiftKey) {
       event.preventDefault();
@@ -80,30 +81,8 @@ export function startApp(): () => void {
   };
   window.addEventListener('keydown', keyHandler);
 
-  /**
-   * 外部点击只向菜单自己的生命周期控制器发出关闭请求。
-   * 菜单内部已阻止事件冒泡，右键按下则留给随后到达的 contextmenu 更新菜单位置。
-   */
-  const menuDismissHandler = (event: PointerEvent): void => {
-    if (event.button === 2 || !getState().menu.open) return;
-    if (!(event.target as Element).closest?.('.context-menu')) renderer?.dismissMenu();
-  };
-  document.addEventListener('pointerdown', menuDismissHandler);
-
-  const formatter = new Intl.DateTimeFormat('zh-CN', {
-    hour: '2-digit',
-    minute: '2-digit',
-    second: '2-digit',
-  });
-  const clockTimer = window.setInterval(() => {
-    const clock = document.querySelector<HTMLTimeElement>('#clock');
-    if (clock) clock.textContent = formatter.format(new Date());
-  }, 1000);
-
   return () => {
     window.removeEventListener('keydown', keyHandler);
-    document.removeEventListener('pointerdown', menuDismissHandler);
-    window.clearInterval(clockTimer);
     renderer?.dispose();
   };
 }

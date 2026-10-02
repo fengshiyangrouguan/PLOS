@@ -20,6 +20,8 @@ export interface LayoutRuntime {
   drag: DragController;
   openMenu: (areaId: string, x: number, y: number) => void;
   geometryChanged: () => void;
+  /** 首次挂载当前 Layer 时，让每个 Area 内容播放一次进入动画。 */
+  animateInitial: boolean;
 }
 
 function CornerHandles(areaId: string, areaElement: HTMLElement, drag: DragController): HTMLButtonElement[] {
@@ -59,7 +61,7 @@ function AreaView(initialArea: AreaLeaf, runtime: LayoutRuntime): MountedLayout 
   return {
     element,
     mount: () => {
-      mountCurrentEditor();
+      mountCurrentEditor(runtime.animateInitial);
       unsubscribe = runtime.store.subscribeSlice(
         (state) => findArea(currentLayer(state).root, area.id),
         (next) => {

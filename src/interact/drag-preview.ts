@@ -20,6 +20,7 @@ export interface DragPreviewController {
   dispose: () => void;
 }
 
+// 保持原有的快速退出节奏；动画完成后由短定时器清理瞬态预览节点。
 const PREVIEW_EXIT_DURATION = 220;
 
 /**
