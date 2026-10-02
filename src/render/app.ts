@@ -122,7 +122,8 @@ export function mountApp(
     menuView = next;
     menuLayer.append(next.element);
     next.position();
-    menuTransition = new SurfaceTransition(next.element);
+    // 菜单包含以视口定位的 fixed 子菜单，根节点不能执行 transform 动画。
+    menuTransition = new SurfaceTransition(next.element, { translatePanel: false });
     menuTransition.show();
   };
 
@@ -147,7 +148,11 @@ export function mountApp(
     if (!modal) return;
     settingsLayer.append(modal);
     const panel = modal.querySelector<HTMLElement>('.settings-modal') ?? modal;
-    settingsTransition = new SurfaceTransition(modal, panel, 300, 200);
+    settingsTransition = new SurfaceTransition(modal, {
+      panel,
+      enterDuration: 300,
+      exitDuration: 200,
+    });
     settingsTransition.show();
   };
 

@@ -30,6 +30,8 @@ const deepBottomBranch = resolveSubmenuPlacement(
 );
 assert(deepBottomBranch.horizontal === 'left', '空间足够时应保留首选水平方向');
 assert(deepBottomBranch.vertical === 'up', '深层分支靠近底部时必须独立向上翻转');
+assert(deepBottomBranch.left === 449, '向左展开时应与触发项保留 1px 重叠');
+assert(deepBottomBranch.top === 323, '向上展开时应按实际菜单高度计算视口坐标');
 
 const rightEdgeBranch = resolveSubmenuPlacement(
   { left: 900, right: 1152, top: 100, bottom: 144 },
@@ -42,6 +44,7 @@ const rightEdgeBranch = resolveSubmenuPlacement(
 );
 assert(rightEdgeBranch.horizontal === 'left', '右侧空间不足时当前一级必须向左翻转');
 assert(rightEdgeBranch.vertical === 'down', '下方空间足够时不应错误翻转');
+assert(rightEdgeBranch.left === 649 && rightEdgeBranch.top === 91, '子菜单应直接返回可写入 fixed 浮层的坐标');
 
 const oversizedSubmenu = resolveSubmenuPlacement(
   { left: 450, right: 702, top: 350, bottom: 394 },

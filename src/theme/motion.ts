@@ -13,13 +13,25 @@ function reducedMotion(): boolean {
 export class SurfaceTransition {
   private animations: Animation[] = [];
   private revision = 0;
+  private readonly panel: HTMLElement;
+  private readonly enterDuration: number;
+  private readonly exitDuration: number;
+  private readonly translatePanel: boolean;
 
   constructor(
     private readonly root: HTMLElement,
-    private readonly panel: HTMLElement = root,
-    private readonly enterDuration = 260,
-    private readonly exitDuration = 170,
-  ) {}
+    options: {
+      panel?: HTMLElement;
+      enterDuration?: number;
+      exitDuration?: number;
+      translatePanel?: boolean;
+    } = {},
+  ) {
+    this.panel = options.panel ?? root;
+    this.enterDuration = options.enterDuration ?? 260;
+    this.exitDuration = options.exitDuration ?? 170;
+    this.translatePanel = options.translatePanel ?? true;
+  }
 
   show(): void {
     this.run(true);
@@ -38,10 +50,6 @@ export class SurfaceTransition {
   private run(show: boolean, finished?: () => void): void {
     const revision = ++this.revision;
     const rootOpacity = show ? '0' : (getComputedStyle(this.root).opacity || '1');
-    const computedTransform = getComputedStyle(this.panel).transform;
-    const panelTransform = show
-      ? 'translateY(10px)'
-      : (computedTransform === 'none' ? 'translateY(0)' : computedTransform);
     for (const animation of this.animations) animation.cancel();
     this.animations = [];
 
@@ -67,13 +75,19 @@ export class SurfaceTransition {
       options,
     );
     this.animations.push(fade);
-    this.animations.push(this.panel.animate(
-      [
-        { transform: panelTransform },
-        { transform: `translateY(${show ? 0 : 7}px)` },
-      ],
-      options,
-    ));
+    if (this.translatePanel) {
+      const computedTransform = getComputedStyle(this.panel).transform;
+      const panelTransform = show
+        ? 'translateY(10px)'
+        : (computedTransform === 'none' ? 'translateY(0)' : computedTransform);
+      this.animations.push(this.panel.animate(
+        [
+          { transform: panelTransform },
+          { transform: `translateY(${show ? 0 : 7}px)` },
+        ],
+        options,
+      ));
+    }
     void fade.finished.then(complete).catch(() => undefined);
   }
 }

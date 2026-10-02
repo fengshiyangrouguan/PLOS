@@ -712,12 +712,30 @@ body:is(.resize-x, .resize-y, .is-splitting) .area {
   width: 252px;
   padding: 8px 10px 10px;
   color: var(--color-fg);
-  background: rgb(247 250 249 / 93%);
   border: var(--line-hairline) solid rgb(255 255 255 / 88%);
   box-shadow: 0 22px 64px rgb(43 62 63 / 15%);
+}
+
+/*
+ * 根菜单本身不能拥有 backdrop-filter：滤镜会让 fixed 后代改以根菜单为包含块，重新
+ * 引入父子坐标耦合。毛玻璃由同尺寸伪元素绘制，菜单树仍保持视口坐标系。
+ */
+.context-menu {
+  isolation: isolate;
+  background: rgb(247 250 249 / 76%);
+}
+
+.context-menu::before {
+  content: '';
+  position: absolute;
+  z-index: -1;
+  inset: 0;
+  background: rgb(247 250 249 / 72%);
   -webkit-backdrop-filter: blur(18px) saturate(0.85);
   backdrop-filter: blur(18px) saturate(0.85);
 }
+
+.submenu { background: rgb(247 250 249 / 97%); }
 
 .context-menu { position: fixed; z-index: 1; }
 .menu-caption { min-height: 32px; padding: 9px 4px; border-bottom: var(--line-hairline) solid var(--line-soft); }
@@ -738,28 +756,18 @@ body:is(.resize-x, .resize-y, .is-splitting) .area {
 .menu-item:focus-visible { color: var(--color-accent); background: rgb(114 146 148 / 8%); }
 .menu-item small { color: var(--color-muted); font-family: var(--font-mono); font-size: var(--type-micro); }
 .submenu {
-  position: absolute;
-  top: -9px;
-  left: calc(100% - 1px);
-  display: none;
+  position: fixed;
+  visibility: hidden;
+  opacity: 0;
+  pointer-events: none;
 }
 
-.submenu.is-measuring {
-  display: block !important;
-  visibility: hidden !important;
-  pointer-events: none !important;
-}
-
-/*
- * 每一级分支保存自己的方向；四条规则同时清除相反方向，避免嵌套层继承到互相冲突
- * 的 left/right 或 top/bottom。方向由展开瞬间的实际尺寸计算，而不是由根菜单猜测。
- */
-.menu-branch[data-submenu-horizontal='right'] > .submenu { right: auto; left: calc(100% - 1px); }
-.menu-branch[data-submenu-horizontal='left'] > .submenu { right: calc(100% - 1px); left: auto; }
-.menu-branch[data-submenu-vertical='down'] > .submenu { top: -9px; bottom: auto; }
-.menu-branch[data-submenu-vertical='up'] > .submenu { top: auto; bottom: -9px; }
 .menu-branch:hover > .submenu,
-.menu-branch:focus-within > .submenu { display: block; }
+.menu-branch:focus-within > .submenu {
+  visibility: visible;
+  opacity: 1;
+  pointer-events: auto;
+}
 
 .editor-choice,
 .effect-choice { grid-template-columns: 10px minmax(0, 1fr) auto; gap: 8px; }

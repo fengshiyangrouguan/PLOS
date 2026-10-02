@@ -57,42 +57,53 @@ function MenuItem(label: string, branch = false, onClick?: () => void): HTMLButt
 }
 
 function Branch(label: string, submenu: HTMLElement): HTMLElement {
-  const branch = h('div', { class: 'menu-branch' }, MenuItem(label, true), submenu);
+  return h('div', { class: 'menu-branch' }, MenuItem(label, true), submenu);
+}
 
-  const positionSubmenu = (): void => {
-    // 窄屏使用固定底部面板，不参与桌面的级联定位。
-    if (window.matchMedia('(max-width: 720px)').matches) return;
-    const root = branch.closest<HTMLElement>('.context-menu');
-    if (!root) return;
+/**
+ * 在根菜单仍不可见时一次性完成全部子菜单定位。
+ *
+ * 旧实现会在每一级 pointerenter 时把 display:none 的子菜单临时挂回布局，再交替读写
+ * offsetWidth、scrollHeight、getBoundingClientRect 和 data 属性。深度越高，同步布局次数越多，
+ * 所以用户会感到逐级累积的延迟。现在每一级子菜单都是独立的视口浮层；打开根菜单时按
+ * DOM 层级从外到内完成定位，悬停热路径不再运行 JavaScript，也不会被父菜单滚动区裁剪。
+ */
+function positionSubmenus(root: HTMLElement): void {
+  // 窄屏使用固定底部面板，不参与桌面的级联定位。
+  if (window.matchMedia('(max-width: 720px)').matches) return;
+  const branches = Array.from(root.querySelectorAll<HTMLElement>('.menu-branch'));
+  const directSubmenu = (branch: HTMLElement): HTMLElement | undefined => Array.from(branch.children)
+    .find((child): child is HTMLElement => child instanceof HTMLElement && child.classList.contains('submenu'));
 
-    // display:none 的节点没有可测尺寸。测量类只在当前同步任务内生效，不会形成可见闪烁。
-    submenu.style.removeProperty('max-height');
-    submenu.style.removeProperty('overflow-y');
-    submenu.classList.add('is-measuring');
-    const submenuWidth = submenu.offsetWidth;
+  // 先清除上一次视口计算留下的高度约束，保证 scrollHeight 表示完整内容高度。
+  for (const branch of branches) {
+    const submenu = directSubmenu(branch);
+    submenu?.style.removeProperty('max-height');
+    submenu?.style.removeProperty('overflow-y');
+  }
+
+  for (const branch of branches) {
+    const submenu = directSubmenu(branch);
+    if (!submenu) continue;
     const submenuHeight = submenu.scrollHeight;
-    const trigger = branch.getBoundingClientRect();
     const placement = resolveSubmenuPlacement(
-      trigger,
-      submenuWidth,
+      branch.getBoundingClientRect(),
+      submenu.offsetWidth,
       submenuHeight,
       window.innerWidth,
       window.innerHeight,
       (root.dataset.menuHorizontal ?? 'right') as MenuHorizontalDirection,
       (root.dataset.menuVertical ?? 'down') as MenuVerticalDirection,
     );
-    branch.dataset.submenuHorizontal = placement.horizontal;
-    branch.dataset.submenuVertical = placement.vertical;
+    submenu.style.left = `${placement.left}px`;
+    submenu.style.top = `${placement.top}px`;
+    submenu.style.removeProperty('right');
+    submenu.style.removeProperty('bottom');
     if (submenuHeight > placement.availableHeight) {
       submenu.style.maxHeight = `${Math.floor(placement.availableHeight)}px`;
       submenu.style.overflowY = 'auto';
     }
-    submenu.classList.remove('is-measuring');
-  };
-
-  branch.addEventListener('pointerenter', positionSubmenu);
-  branch.addEventListener('focusin', positionSubmenu);
-  return branch;
+  }
 }
 
 function targetAppearance(state: AppState, target: AppearanceTarget): AreaAppearance | null {
@@ -332,6 +343,7 @@ export function ContextMenu(
     menu.style.top = `${placement.top}px`;
     menu.style.removeProperty('right');
     menu.style.removeProperty('bottom');
+    positionSubmenus(menu);
     menu.style.removeProperty('visibility');
   };
 

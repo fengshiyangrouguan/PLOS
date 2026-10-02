@@ -19,6 +19,8 @@ export interface SubmenuPlacement {
   horizontal: MenuHorizontalDirection;
   vertical: MenuVerticalDirection;
   availableHeight: number;
+  left: number;
+  top: number;
 }
 
 const VIEWPORT_INSET = 12;
@@ -119,10 +121,22 @@ export function resolveSubmenuPlacement(
     preferredVertical === 'down' ? upSpace : downSpace,
     submenuHeight,
   );
+  const availableHeight = Math.max(96, vertical === 'down' ? downSpace : upSpace);
+  const renderedHeight = Math.min(submenuHeight, availableHeight);
+  const unclampedLeft = horizontal === 'right'
+    ? trigger.right - HORIZONTAL_OVERLAP
+    : trigger.left + HORIZONTAL_OVERLAP - submenuWidth;
+  const unclampedTop = vertical === 'down'
+    ? trigger.top - VERTICAL_OVERLAP
+    : trigger.bottom + VERTICAL_OVERLAP - renderedHeight;
+  const maxLeft = Math.max(edge, viewportWidth - edge - submenuWidth);
+  const maxTop = Math.max(edge, viewportHeight - edge - renderedHeight);
 
   return {
     horizontal,
     vertical,
-    availableHeight: Math.max(96, vertical === 'down' ? downSpace : upSpace),
+    availableHeight,
+    left: clamp(unclampedLeft, edge, maxLeft),
+    top: clamp(unclampedTop, edge, maxTop),
   };
 }
